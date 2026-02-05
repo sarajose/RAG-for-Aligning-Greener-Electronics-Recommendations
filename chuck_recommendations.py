@@ -85,7 +85,7 @@ def build_recommendation_dataset(pdf_paths):
                 "extraction_method": "policy_recommendation_regex",
             })
 
-        # Bullets (good for Orgalim and Higher Education docs)
+        # 2) Bullets (good for Orgalim + Higher Education docs)
         bullets = extract_bullets(pages)
         for p0, p1, txt in bullets:
             if len(txt) < 25:
