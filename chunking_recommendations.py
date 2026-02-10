@@ -8,7 +8,7 @@ introduces a new action or merely qualifies the previous one.
 
 Usage:
   python -m spacy download en_core_web_sm
-  python chunking_recommendations.py -i data/recommendations.txt -o outputs/recommendations.csv
+  python chunking_recommendations.py -i data/recommendations/recommendations.txt -o outputs/recommendations.csv
 """
 
 import re, csv, argparse, spacy
