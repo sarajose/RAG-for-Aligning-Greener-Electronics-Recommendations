@@ -1,0 +1,63 @@
+//read all Links
+var Links = document.getElementsByTagName("a");
+var aElement;
+var Anchor = {};
+
+for (aElement of Links) {
+    var text = aElement.textContent;
+    // select Links which are active consolidation tags
+    if (text.includes("▼") || text.includes("►")) {
+        let regex = /(\w\d*)/g;
+
+        // build anchors and maintain a sequence
+        var Act = text.match(regex)[0];
+
+        if (isNaN(Anchor[Act])) {
+            Anchor[Act] = 0;
+        } else {
+            Anchor[Act] = Anchor[Act] + 1;
+        }
+
+        var id = text.match(regex) + "-" + Anchor[Act];
+        var NewNode = document.createElement("a");
+
+        NewNode.setAttribute("class", "anchorarrow");
+        NewNode.setAttribute("id", id);
+
+        // add Links to the next occurences
+        var NextAnchorId = Anchor[Act] + 1;
+        NewNode.setAttribute("href", "#" + text.match(regex) + "-" + NextAnchorId);
+
+        var arrowDown = document.createElement("i");
+
+        arrowDown.setAttribute("class", "fa fa-arrow-down");
+        arrowDown.setAttribute("title", "NEXT");
+        arrowDown.setAttribute("style", "text-indent: 2pt;");
+        arrowDown.setAttribute("aria-hidden", "true");
+
+        NewNode.appendChild(arrowDown);
+
+        aElement.parentNode.insertBefore(NewNode, aElement.nextSibling)
+    }
+}
+// remove Links from the last tags and replace arrow by centered dot
+
+for (var key in (Anchor)) {
+    var LastElement = document.getElementById(key + "-" + Anchor[key]);
+    var endCircle = document.createElement("i");
+
+    endCircle.setAttribute("class", "fa fa-circle");
+    endCircle.setAttribute("title", "LAST");
+    endCircle.setAttribute("style", "text-indent: 5pt;");
+    endCircle.setAttribute("aria-hidden", "true");
+
+    LastElement.replaceChild(endCircle, LastElement.childNodes[0]);
+}
+
+//remove links to acts from tags on cover age
+var Links = document.getElementsByClassName("arrow");
+var arrowElement;
+for (arrowElement of Links) {
+    var textNode = document.createTextNode(arrowElement.textContent);
+    arrowElement.replaceChild(textNode, arrowElement.childNodes[1]);
+}
