@@ -39,10 +39,7 @@ import faiss
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 
-
-# ═══════════════════════════════════════════════════════════════
 # 1. CONFIGURATION
-# ═══════════════════════════════════════════════════════════════
 
 EMBEDDING_MODELS = {
     "bge-m3": "BAAI/bge-m3",
@@ -85,10 +82,7 @@ class Chunk:
             "text": self.text,
         }
 
-
-# ═══════════════════════════════════════════════════════════════
 # 2. DATA LOADING
-# ═══════════════════════════════════════════════════════════════
 
 def load_chunks(csv_path: Path) -> list[Chunk]:
     """Load chunks from CSV."""
@@ -111,9 +105,7 @@ def load_chunks(csv_path: Path) -> list[Chunk]:
     return chunks
 
 
-# ═══════════════════════════════════════════════════════════════
 # 3. EMBEDDING GENERATION
-# ═══════════════════════════════════════════════════════════════
 
 def get_embed_model(model_key: str) -> SentenceTransformer:
     """Load a sentence-transformer embedding model."""
@@ -138,9 +130,7 @@ def embed_texts(
     return embeddings
 
 
-# ═══════════════════════════════════════════════════════════════
 # 4. FAISS INDEX (Dense Vector Search)
-# ═══════════════════════════════════════════════════════════════
 
 def build_faiss_index(embeddings: np.ndarray, use_hnsw: bool = True) -> faiss.Index:
     """Build a FAISS index for approximate nearest neighbor search.
@@ -177,10 +167,7 @@ def search_faiss(
     scores, indices = index.search(query_embedding.astype(np.float32), k)
     return scores[0], indices[0]
 
-
-# ═══════════════════════════════════════════════════════════════
 # 5. BM25 INDEX (Sparse Lexical Search)
-# ═══════════════════════════════════════════════════════════════
 
 def tokenize(text: str) -> list[str]:
     """Simple whitespace + lowercase tokenization for BM25."""
@@ -208,9 +195,7 @@ def search_bm25(bm25: BM25Okapi, query: str, k: int = 10) -> tuple[np.ndarray, n
     return top_k_scores, top_k_idx
 
 
-# ═══════════════════════════════════════════════════════════════
 # 6. HYBRID RETRIEVAL (Reciprocal Rank Fusion)
-# ═══════════════════════════════════════════════════════════════
 
 def reciprocal_rank_fusion(
     results: list[list[int]], k: int = 60
@@ -264,9 +249,7 @@ def hybrid_search(
     return [idx for idx, score in fused[:k]]
 
 
-# ═══════════════════════════════════════════════════════════════
 # 7. RERANKING (Cross-Encoder)
-# ═══════════════════════════════════════════════════════════════
 
 def rerank(
     query: str, chunks: list[Chunk], indices: list[int], top_k: int = 5
@@ -289,9 +272,7 @@ def rerank(
     return [indices[i] for i in reranked_idx]
 
 
-# ═══════════════════════════════════════════════════════════════
 # 8. INDEX PERSISTENCE
-# ═══════════════════════════════════════════════════════════════
 
 def save_indices(
     faiss_index: faiss.Index,
@@ -320,9 +301,7 @@ def load_indices(model_key: str) -> tuple[faiss.Index, BM25Okapi, list[Chunk]]:
     return faiss_index, bm25, chunks
 
 
-# ═══════════════════════════════════════════════════════════════
 # 9. BUILD PIPELINE
-# ═══════════════════════════════════════════════════════════════
 
 def build_cmd(csv_path: Path, model_key: str = "bge-m3") -> None:
     """Build all indices from a CSV file."""
@@ -350,9 +329,7 @@ def build_cmd(csv_path: Path, model_key: str = "bge-m3") -> None:
     print("✓ Build complete")
 
 
-# ═══════════════════════════════════════════════════════════════
 # 10. QUERY PIPELINE
-# ═══════════════════════════════════════════════════════════════
 
 def query_cmd(
     query: str,
@@ -386,9 +363,7 @@ def query_cmd(
         print(f"    {c.text[:200]}...")
 
 
-# ═══════════════════════════════════════════════════════════════
 # 11. EVALUATION
-# ═══════════════════════════════════════════════════════════════
 
 def evaluate_cmd(test_path: Path, model_key: str = "bge-m3", k: int = 10) -> None:
     """Evaluate retrieval on a test set.
@@ -440,9 +415,7 @@ def evaluate_cmd(test_path: Path, model_key: str = "bge-m3", k: int = 10) -> Non
     print(f"  MRR@{k}:    {avg_mrr:.3f}")
 
 
-# ═══════════════════════════════════════════════════════════════
 # 12. CLI
-# ═══════════════════════════════════════════════════════════════
 
 def main() -> None:
     parser = argparse.ArgumentParser(
