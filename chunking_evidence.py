@@ -30,6 +30,7 @@ import argparse
 import csv
 import re
 from pathlib import Path
+from hashlib import sha256
 
 from bs4 import BeautifulSoup, Tag
 
@@ -42,6 +43,14 @@ def load_html(path: Path) -> BeautifulSoup:
     """Read an HTML file and return a parsed DOM tree."""
     with open(path, encoding="utf-8") as f:
         return BeautifulSoup(f, "lxml")
+
+
+def generate_chunk_id(doc_name: str, article: str, para: str, text: str) -> str:
+    """Generate a stable unique ID for each chunk."""
+    base = f"{doc_name}|{article}|{para}"
+    # Add text hash for uniqueness when multiple chunks have same location
+    txt_hash = sha256(text.encode()).hexdigest()[:8]
+    return f"{base}|{txt_hash}"
 
 
 def extract_document_title(soup: BeautifulSoup) -> str:
@@ -198,7 +207,7 @@ def extract_paragraphs(article: Tag) -> list[dict]:
 _MAX_ANNEX_CHARS = 2000  # truncate very large annexes
 
 
-def extract_annexes(soup: BeautifulSoup, doc_name: str) -> list[dict]:
+def extract_annexes(soup: BeautifulSoup, doc_name: str, source_file: str, version: str) -> list[dict]:
     """Extract annexes as coarse-grained chunks (title + body preview)."""
     chunks: list[dict] = []
     for anx in soup.find_all("div", id=re.compile(r"^anx_")):
@@ -216,12 +225,17 @@ def extract_annexes(soup: BeautifulSoup, doc_name: str) -> list[dict]:
         if len(body) > _MAX_ANNEX_CHARS:
             body = body[:_MAX_ANNEX_CHARS] + " [...]"
 
+        chunk_id = generate_chunk_id(doc_name, title, "", body)
         chunks.append({
+            "id": chunk_id,
             "document": doc_name,
+            "source_file": source_file,
+            "version": version,
             "chapter": "Annex",
             "article": title,
             "article_subtitle": "",
             "paragraph": "",
+            "char_offset": 0,
             "text": body,
         })
     return chunks
@@ -235,10 +249,17 @@ def parse_eurlex_html(path: Path) -> list[dict]:
     """Parse one EUR-Lex HTML file into a list of provision chunks.
 
     Each chunk is a dict with keys:
-      document, chapter, article, article_subtitle, paragraph, text
+      id, document, source_file, version, chapter, article,
+      article_subtitle, paragraph, char_offset, text
     """
     soup = load_html(path)
     doc_name = infer_document_short_name(path)
+    source_file = path.name
+    # Extract version from filename (e.g., "01.01.2025" from "ROHS-01.01.2025.html")
+    version = ""
+    stem_parts = path.stem.split("-")
+    if len(stem_parts) > 1:
+        version = "-".join(stem_parts[1:])
 
     rows: list[dict] = []
 
@@ -252,29 +273,40 @@ def parse_eurlex_html(path: Path) -> list[dict]:
 
         if paras:
             for p in paras:
+                text = p["text"]
+                chunk_id = generate_chunk_id(doc_name, art_num, p["para_num"], text)
                 rows.append({
+                    "id": chunk_id,
                     "document": doc_name,
+                    "source_file": source_file,
+                    "version": version,
                     "chapter": chapter,
                     "article": art_num,
                     "article_subtitle": art_sub,
                     "paragraph": p["para_num"],
-                    "text": p["text"],
+                    "char_offset": 0,  # placeholder - full DOM traversal needed for precise offset
+                    "text": text,
                 })
         else:
             # Fallback: article has no parseable paragraphs
             full = tag_text(art)
             if full and len(full) > 20:
+                chunk_id = generate_chunk_id(doc_name, art_num, "", full)
                 rows.append({
+                    "id": chunk_id,
                     "document": doc_name,
+                    "source_file": source_file,
+                    "version": version,
                     "chapter": chapter,
                     "article": art_num,
                     "article_subtitle": art_sub,
                     "paragraph": "",
+                    "char_offset": 0,
                     "text": full,
                 })
 
     # ── Annexes ──
-    rows.extend(extract_annexes(soup, doc_name))
+    rows.extend(extract_annexes(soup, doc_name, source_file, version))
 
     return rows
 
@@ -284,8 +316,9 @@ def parse_eurlex_html(path: Path) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════
 
 FIELDNAMES = [
-    "document", "chapter", "article",
-    "article_subtitle", "paragraph", "text",
+    "id", "document", "source_file", "version",
+    "chapter", "article", "article_subtitle",
+    "paragraph", "char_offset", "text",
 ]
 
 
