@@ -39,7 +39,7 @@ import faiss
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 
-# 1. CONFIGURATION
+# CONFIGURATION
 
 EMBEDDING_MODELS = {
     "bge-m3": "BAAI/bge-m3",
