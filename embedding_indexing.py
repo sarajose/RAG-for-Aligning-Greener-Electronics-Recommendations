@@ -317,16 +317,16 @@ def build_cmd(csv_path: Path, model_key: str = "bge-m3") -> None:
     print(f"Embeddings shape: {embeddings.shape}")
 
     # FAISS index
-    print("Building FAISS HNSW index...")
+    print("Building FAISS HNSW index")
     faiss_index = build_faiss_index(embeddings, use_hnsw=True)
 
     # BM25 index
-    print("Building BM25 index...")
+    print("Building BM25 index")
     bm25 = build_bm25_index(texts)
 
     # Save
     save_indices(faiss_index, bm25, chunks, model_key)
-    print("✓ Build complete")
+    print("Build complete")
 
 
 # 10. QUERY PIPELINE
@@ -337,14 +337,14 @@ def query_cmd(
     k: int = 10,
     rerank_top: int = 5,
     use_reranker: bool = True,
+    output_file: Optional[Path] = None,
 ) -> None:
-    """Query the hybrid retrieval system."""
-    print(f"Loading indices ({model_key})...")
+    """Query the hybrid retrieval system and optionally save results to file."""
+    print(f"Loading indices ({model_key})")
     faiss_index, bm25, chunks = load_indices(model_key)
     embed_model = get_embed_model(model_key)
 
     print(f"\nQuery: {query}")
-    print("-" * 80)
 
     # Hybrid search
     hybrid_indices = hybrid_search(query, bm25, faiss_index, embed_model, k=k)
@@ -357,10 +357,102 @@ def query_cmd(
         final_indices = hybrid_indices[:rerank_top]
 
     # Display results
+    results = []
     for rank, idx in enumerate(final_indices, start=1):
         c = chunks[idx]
         print(f"\n[{rank}] {c.document} | {c.article} | Para {c.paragraph}")
         print(f"    {c.text[:200]}...")
+        results.append({
+            "query": query,
+            "rank": rank,
+            "chunk_id": c.id,
+            "document": c.document,
+            "article": c.article,
+            "paragraph": c.paragraph,
+            "text": c.text,
+        })
+
+    # Save to file if requested
+    if output_file:
+        output_file = Path(output_file)
+        file_exists = output_file.exists()
+        with open(output_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=results[0].keys() if results else [])
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(results)
+        print(f"\nResults saved to {output_file}")
+
+
+def query_batch_cmd(
+    recommendations_csv: Path,
+    model_key: str = "bge-m3",
+    k: int = 10,
+    rerank_top: int = 5,
+    use_reranker: bool = True,
+    output_file: Optional[Path] = None,
+) -> None:
+    """Query the hybrid retrieval system with multiple recommendations from CSV."""
+    print(f"Loading indices ({model_key})")
+    faiss_index, bm25, chunks = load_indices(model_key)
+    embed_model = get_embed_model(model_key)
+
+    print(f"\nLoading recommendations from {recommendations_csv}")
+    recommendations = []
+    with open(recommendations_csv, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            recommendations.append(row)
+    
+    print(f"Loaded {len(recommendations)} recommendations\n")
+
+    all_results = []
+
+    for i, rec in enumerate(recommendations, start=1):
+        query = rec.get("recommendation", "")
+        if not query.strip():
+            print(f"[{i}/{len(recommendations)}] Skipping empty recommendation")
+            continue
+
+        print(f"[{i}/{len(recommendations)}] Query: {query[:80]}...")
+
+        # Hybrid search
+        hybrid_indices = hybrid_search(query, bm25, faiss_index, embed_model, k=k)
+
+        # Rerank
+        if use_reranker:
+            final_indices = rerank(query, chunks, hybrid_indices, top_k=rerank_top)
+        else:
+            final_indices = hybrid_indices[:rerank_top]
+
+        # Collect results
+        for rank, idx in enumerate(final_indices, start=1):
+            c = chunks[idx]
+            result = {
+                "section": rec.get("section", ""),
+                "subsection": rec.get("subsection", ""),
+                "title": rec.get("title", ""),
+                "recommendation": query,
+                "rank": rank,
+                "chunk_id": c.id,
+                "document": c.document,
+                "article": c.article,
+                "paragraph": c.paragraph,
+                "text": c.text,
+            }
+            all_results.append(result)
+
+    # Save all results to file
+    if output_file and all_results:
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
+            writer.writeheader()
+            writer.writerows(all_results)
+        print(f"\nResults saved to {output_file} ({len(all_results)} total matches)")
+    elif all_results:
+        print(f"\nGenerated {len(all_results)} total matches (no output file specified)")
 
 
 # 11. EVALUATION
@@ -411,8 +503,8 @@ def evaluate_cmd(test_path: Path, model_key: str = "bge-m3", k: int = 10) -> Non
     avg_mrr = np.mean(mrrs)
 
     print("\nEvaluation Results:")
-    print(f"  Recall@{k}: {avg_recall:.3f}")
-    print(f"  MRR@{k}:    {avg_mrr:.3f}")
+    print(f"  Recall{k}: {avg_recall:.3f}")
+    print(f"  MRR{k}:    {avg_mrr:.3f}")
 
 
 # 12. CLI
@@ -437,7 +529,16 @@ def main() -> None:
     query_p.add_argument("-q", "--query", required=True, help="Query text")
     query_p.add_argument("-m", "--model", default="bge-m3", choices=list(EMBEDDING_MODELS.keys()))
     query_p.add_argument("-k", "--top-k", type=int, default=10, help="Number of results")
+    query_p.add_argument("-o", "--output", type=Path, default=None, help="Output CSV file to save results")
     query_p.add_argument("--no-rerank", action="store_true", help="Skip reranking")
+
+    # Batch query command
+    batch_p = subparsers.add_parser("query-batch", help="Query with multiple recommendations from CSV")
+    batch_p.add_argument("-i", "--input", required=True, type=Path, help="Input CSV file with recommendations (columns: section, subsection, title, recommendation)")
+    batch_p.add_argument("-o", "--output", required=True, type=Path, help="Output CSV file to save results")
+    batch_p.add_argument("-m", "--model", default="bge-m3", choices=list(EMBEDDING_MODELS.keys()))
+    batch_p.add_argument("-k", "--top-k", type=int, default=10, help="Number of results per recommendation")
+    batch_p.add_argument("--no-rerank", action="store_true", help="Skip reranking")
 
     # Evaluate command
     eval_p = subparsers.add_parser("evaluate", help="Evaluate on test set")
@@ -450,7 +551,9 @@ def main() -> None:
     if args.command == "build":
         build_cmd(args.input, args.model)
     elif args.command == "query":
-        query_cmd(args.query, args.model, args.top_k, rerank_top=5, use_reranker=not args.no_rerank)
+        query_cmd(args.query, args.model, args.top_k, rerank_top=5, use_reranker=not args.no_rerank, output_file=args.output)
+    elif args.command == "query-batch":
+        query_batch_cmd(args.input, args.model, args.top_k, rerank_top=args.top_k, use_reranker=not args.no_rerank, output_file=args.output)
     elif args.command == "evaluate":
         evaluate_cmd(args.test, args.model, args.top_k)
 
