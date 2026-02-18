@@ -34,10 +34,7 @@ from hashlib import sha256
 
 from bs4 import BeautifulSoup, Tag
 
-
-# ═══════════════════════════════════════════════════════════════
 # 1. LOADING & METADATA
-# ═══════════════════════════════════════════════════════════════
 
 def load_html(path: Path) -> BeautifulSoup:
     """Read an HTML file and return a parsed DOM tree."""
@@ -86,10 +83,7 @@ def infer_document_short_name(path: Path) -> str:
             return label
     return stem.split("-")[0].strip()
 
-
-# ═══════════════════════════════════════════════════════════════
 # 2. TEXT HELPERS
-# ═══════════════════════════════════════════════════════════════
 
 _WS = re.compile(r"\s+")
 _ARROW = re.compile(r"[▼►◄▲][A-Z0-9]+\b")  # amendment markers ▼B, ►M2 …
@@ -106,9 +100,7 @@ def tag_text(tag: Tag) -> str:
     return clean(tag.get_text())
 
 
-# ═══════════════════════════════════════════════════════════════
 # 3. DOM NAVIGATION — hierarchy extraction
-# ═══════════════════════════════════════════════════════════════
 
 def find_chapter(article_tag: Tag) -> str:
     """Walk up from an article <div> to find its chapter/title heading.
@@ -153,9 +145,7 @@ def get_article_heading(art: Tag) -> tuple[str, str]:
     return number, subtitle
 
 
-# ═══════════════════════════════════════════════════════════════
 # 4. PARAGRAPH & LIST-ITEM EXTRACTION
-# ═══════════════════════════════════════════════════════════════
 
 def extract_paragraphs(article: Tag) -> list[dict]:
     """Extract numbered and unnumbered paragraphs from an article.
@@ -200,9 +190,7 @@ def extract_paragraphs(article: Tag) -> list[dict]:
     return paragraphs
 
 
-# ═══════════════════════════════════════════════════════════════
 # 5. ANNEX EXTRACTION
-# ═══════════════════════════════════════════════════════════════
 
 _MAX_ANNEX_CHARS = 2000  # truncate very large annexes
 
@@ -241,9 +229,7 @@ def extract_annexes(soup: BeautifulSoup, doc_name: str, source_file: str, versio
     return chunks
 
 
-# ═══════════════════════════════════════════════════════════════
 # 6. MAIN PARSE PIPELINE
-# ═══════════════════════════════════════════════════════════════
 
 def parse_eurlex_html(path: Path) -> list[dict]:
     """Parse one EUR-Lex HTML file into a list of provision chunks.
@@ -311,9 +297,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
     return rows
 
 
-# ═══════════════════════════════════════════════════════════════
 # 7. MULTI-FILE PROCESSING & CSV OUTPUT
-# ═══════════════════════════════════════════════════════════════
 
 FIELDNAMES = [
     "id", "document", "source_file", "version",
@@ -355,9 +339,7 @@ def main(input_path: str, output_path: str) -> None:
     print(f"\nWrote {len(rows)} total chunks → {output_path}")
 
 
-# ═══════════════════════════════════════════════════════════════
 # 8. CLI
-# ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
