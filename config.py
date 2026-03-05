@@ -49,7 +49,7 @@ LLM_MODEL = "gpt-4o"
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 1024
 
-# Alignment labels
+# Alignment labels (to be denfined, just as a placeholder)
 
 ALIGNMENT_LABELS: list[str] = [
     "Aligned",
@@ -61,8 +61,8 @@ ALIGNMENT_LABELS: list[str] = [
 
 # Retrieval hyper-parameters
 
-DEFAULT_TOP_K = 10              # hybrid candidates before reranking
-DEFAULT_RERANK_TOP = 5          # results kept after cross-encoder
+DEFAULT_TOP_K = 10             # hybrid candidates before reranking
+DEFAULT_RERANK_TOP = 5         # results kept after cross-encoder
 FAISS_HNSW_M = 32              # bi-directional links per node
 FAISS_EF_CONSTRUCT = 40        # construction search depth
 FAISS_EF_SEARCH = 16           # query-time search depth
