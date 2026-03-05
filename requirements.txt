@@ -10,7 +10,7 @@ beautifulsoup4>=4.12
 lxml>=4.9
 spacy>=3.5
 
-# LLM classification (OpenAI or compatible API)
+# LLM classification (OpenAI or compatible API) (If I end up using a different provider, this can be replaced with their specific library)
 openai>=1.0
 
 # Utilities
