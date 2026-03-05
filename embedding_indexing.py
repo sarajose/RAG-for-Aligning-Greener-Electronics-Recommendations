@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import numpy as np
 import pickle
 from hashlib import sha256
 from pathlib import Path
 
 import faiss
-import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
@@ -36,7 +36,7 @@ from config import (
 
 # Re-export Chunk so that pickled indices created with the old code (which
 # stored ``embedding_indexing.Chunk`` objects) can still be loaded.
-from data_models import Chunk  # noqa: F401 – re-export for pickle compat
+from data_models import Chunk
 
 
 # Data loading
@@ -192,6 +192,7 @@ def build_faiss_index(
 
 # BM25 index (sparse lexical search)
 
+# TODO: Change for a better tokenizer
 def tokenize(text: str) -> list[str]:
     """Whitespace + lower-case tokenisation for BM25."""
     return text.lower().split()
@@ -239,7 +240,7 @@ def load_indices(
 
     return faiss_index, bm25, chunks
 
-
+# Is this class really necessary?
 class _ChunkUnpickler(pickle.Unpickler):
     """Redirect old Chunk class references to ``data_models.Chunk``."""
 
@@ -283,7 +284,7 @@ def build_index(csv_path: Path, model_key: str = DEFAULT_MODEL_KEY) -> None:
     bm = build_bm25_index(texts)
 
     save_indices(fi, bm, chunks, model_key)
-    print("[build] Done ✓")
+    print("[build] Done")
 
 
 def build_merged_index(
