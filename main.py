@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-main.py - Orchestrates:
-  - EU evidence scraping+chunking (chunking_evidence.py)
-  - recommendation extraction (chunking_recommendations.py)
+Entry point for the RAG policy-alignment pipeline.
 
-Does NOT modify your modules. It tries to call their functions robustly.
+Delegates to :pymod:`pipeline` which exposes the full CLI
+(``build``, ``evaluate``, ``classify``, ``run``).
 
-usage: python main.py --mode recs --recs-dir "data/recommendations"
+Usage::
+
+    python main.py build -i outputs/evidence.csv -m bge-m3
+    python main.py evaluate --gold gold_standard_doc_level/gold_standard.csv
+    python main.py classify -i outputs/recommendations.csv -o outputs/classified.csv
+    python main.py run -i outputs/recommendations.csv --gold gold_standard_doc_level/gold_standard.csv
 """
 
-
-#import chunking_evidence
-import chunking_recommendations
-
+from pipeline import main
 
 if __name__ == "__main__":
-    pass
+    main()
