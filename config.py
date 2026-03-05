@@ -66,7 +66,8 @@ DEFAULT_RERANK_TOP = 5          # results kept after cross-encoder
 FAISS_HNSW_M = 32              # bi-directional links per node
 FAISS_EF_CONSTRUCT = 40        # construction search depth
 FAISS_EF_SEARCH = 16           # query-time search depth
-RRF_K = 60                     # RRF smoothing constant
+RRF_K = 60                     # RRF smoothing constant (according to Reciprocal Rank Fusion 
+                               # outperforms Condorcet and individual Rank Learning Methods paper)
 
 # Evaluation K values
 EVAL_K_VALUES: list[int] = [1, 3, 5, 10, 20]
