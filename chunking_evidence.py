@@ -17,6 +17,9 @@ Chunking strategy
      "shall / except / where" clauses remain together.
   5. Write a flat CSV: one provision per row with full hierarchy context.
 
+
+LangChain <---
+
 Usage
 ─────
   pip install beautifulsoup4 lxml
@@ -249,7 +252,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
 
     rows: list[dict] = []
 
-    # ── Articles ──
+    # Articles
     for art in soup.find_all(
         "div", class_="eli-subdivision", id=re.compile(r"^art_")
     ):
@@ -291,13 +294,13 @@ def parse_eurlex_html(path: Path) -> list[dict]:
                     "text": full,
                 })
 
-    # ── Annexes ──
+    # Annexes
     rows.extend(extract_annexes(soup, doc_name, source_file, version))
 
     return rows
 
 
-# 7. MULTI-FILE PROCESSING & CSV OUTPUT
+# MULTI-FILE PROCESSING & CSV OUTPUT
 
 FIELDNAMES = [
     "id", "document", "source_file", "version",
