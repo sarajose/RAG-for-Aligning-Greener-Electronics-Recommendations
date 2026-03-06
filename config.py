@@ -46,7 +46,8 @@ RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # LLM (alignment classification)
 
 LLM_MODEL = "gpt-4o"
-LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
+LLM_TEMPERATURE = 0.0          # deterministic for reproducibility 
+                               # (controls randomness of the output, higher values make the model more creative))
 LLM_MAX_TOKENS = 1024
 
 # Alignment labels (to be denfined, just as a placeholder)
