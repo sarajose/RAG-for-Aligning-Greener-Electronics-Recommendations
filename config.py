@@ -16,9 +16,11 @@ DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
 OUTPUT_DIR = BASE_DIR / "outputs"
-INDEX_DIR = BASE_DIR / "indices"
+INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = BASE_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
+NOTEBOOK_DIR = BASE_DIR / "notebooks"
+DOCS_DIR = BASE_DIR / "docs"
 
 for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -28,6 +30,7 @@ for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
 EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"
 EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"
 GOLD_STANDARD_CSV = GOLD_STANDARD_DIR / "gold_standard.csv"
+WHITEPAPER_RECOMMENDATIONS_CSV = DATA_DIR / "recommendations_whitepaper" / "recommendations_empty.csv"
 
 # Embedding models
 
@@ -43,12 +46,13 @@ DEFAULT_MODEL_KEY = "bge-m3"
 
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-# LLM (alignment classification)
+# LLM (alignment classification) — open-source models
 
-LLM_MODEL = "gpt-4o"
-LLM_TEMPERATURE = 0.0          # deterministic for reproducibility 
-                               # (controls randomness of the output, higher values make the model more creative))
+LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"         # classifier
+JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # LLM-as-judge
+LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 1024
+LLM_QUANTIZE_4BIT = False       # set True for ≤8 GB VRAM GPUs
 
 # Alignment labels (to be denfined, just as a placeholder)
 
