@@ -10,8 +10,19 @@ beautifulsoup4>=4.12
 lxml>=4.9
 spacy>=3.5
 
-# LLM classification (OpenAI or compatible API) (If I end up using a different provider, this can be replaced with their specific library)
-openai>=1.0
+# Open-source LLM classification (replaces OpenAI API)
+torch>=2.0
+transformers>=4.40
+accelerate>=0.30
+
+# Optional: 4-bit quantisation for smaller GPUs
+# bitsandbytes>=0.43  # uncomment if using quantize_4bit=True
+
+# Notebooks & visualisation
+jupyter>=1.0
+matplotlib>=3.7
+seaborn>=0.12
+pandas>=2.0
 
 # Utilities
 tqdm>=4.65
