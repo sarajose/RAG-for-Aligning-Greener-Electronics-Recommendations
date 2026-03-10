@@ -6,7 +6,6 @@ hyper-parameters.  Every other module imports from here so that
 nothing is hard-coded elsewhere.
 """
 
-from __future__ import annotations
 from pathlib import Path
 
 # Project paths
@@ -17,7 +16,7 @@ EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
 OUTPUT_DIR = BASE_DIR / "outputs"
 INDEX_DIR = OUTPUT_DIR / "indices"
-GOLD_STANDARD_DIR = BASE_DIR / "gold_standard_doc_level"
+GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
 NOTEBOOK_DIR = BASE_DIR / "notebooks"
 DOCS_DIR = BASE_DIR / "docs"
