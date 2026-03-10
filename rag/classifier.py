@@ -1,9 +1,6 @@
 """
 Open-source LLM alignment classifier.
 
-Replaces the API-based (OpenAI) classifier with a locally-hosted model
-loaded via HuggingFace ``transformers``.
-
 Default model: **Qwen/Qwen2.5-7B-Instruct** — top-ranked open-source
 model for instruction-following and structured JSON output on the MTEB
 leaderboard (as of early 2025).  Supports 4-bit quantisation via
