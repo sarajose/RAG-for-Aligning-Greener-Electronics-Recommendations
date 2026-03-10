@@ -21,7 +21,6 @@ Classification metrics
 * Confusion matrix
 """
 
-from __future__ import annotations
 
 import math
 import numpy as np
@@ -35,8 +34,84 @@ from sklearn.metrics import (
 
 from data_models import RetrievalMetrics, ClassificationMetrics
 
-# Retrieval — per-query helpers
 
+# Bootstrap confidence intervals & statistical significance
+
+def bootstrap_ci(
+    scores: list[float],
+    n_bootstrap: int = 10_000,
+    confidence: float = 0.95,
+    rng_seed: int = 42,
+) -> tuple[float, float, float]:
+    """Compute a bootstrap confidence interval for the mean of *scores*.
+
+    Parameters
+    ----------
+    scores : list[float]
+        Per-query metric values (e.g. per-query NDCG).
+    n_bootstrap : int
+        Number of bootstrap resamples.
+    confidence : float
+        Confidence level (default 0.95 → 95 % CI).
+    rng_seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        ``(mean, ci_lower, ci_upper)``
+    """
+    rng = np.random.RandomState(rng_seed)
+    arr = np.asarray(scores, dtype=float)
+    n = len(arr)
+    means = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        sample = arr[rng.randint(0, n, size=n)]
+        means[i] = sample.mean()
+    alpha = (1 - confidence) / 2
+    lo, hi = np.percentile(means, [alpha * 100, (1 - alpha) * 100])
+    return float(arr.mean()), float(lo), float(hi)
+
+
+def paired_permutation_test(
+    scores_a: list[float],
+    scores_b: list[float],
+    n_permutations: int = 10_000,
+    rng_seed: int = 42,
+) -> float:
+    """Two-sided paired permutation test for the difference of means.
+
+    Tests whether system A and system B perform differently on the same
+    set of queries.
+
+    Parameters
+    ----------
+    scores_a, scores_b : list[float]
+        Per-query scores for system A and system B (same length / order).
+    n_permutations : int
+        Number of random permutations.
+    rng_seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    float
+        Two-sided p-value.
+    """
+    rng = np.random.RandomState(rng_seed)
+    a = np.asarray(scores_a, dtype=float)
+    b = np.asarray(scores_b, dtype=float)
+    assert len(a) == len(b), "Score lists must have the same length"
+    diff = a - b
+    observed = np.abs(diff.mean())
+    count = 0
+    for _ in range(n_permutations):
+        signs = rng.choice([-1, 1], size=len(diff))
+        if np.abs((diff * signs).mean()) >= observed:
+            count += 1
+    return count / n_permutations
+
+# Retrieval — per-query helpers
 
 def hit_at_k(retrieved: list[str], relevant: set[str]) -> int:
     """Return 1 if **any** relevant item appears in *retrieved*, else 0.

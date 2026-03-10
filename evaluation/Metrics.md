@@ -3,10 +3,10 @@
 ### Hit@k
 Checks if at least one relevant document appears in the top-k retrieved documents for a query.
 Example: If the gold standard says Document A is relevant and it appears in your top 5 results, Hit@5 = 1 for that query.
-### Recall@k
+### Recall@k (not sure if relevant)
 Measures the fraction of all relevant documents that appear in the top-k retrieved documents.
 Example: If there are 3 relevant documents and 2 are in your top 10, Recall@10 = 2/3.
-### Precision@k
+### Precision@k (not sure if relevant)
 Measures the fraction of the top-k retrieved documents that are actually relevant.
 Example: If 3 out of your top 5 retrieved documents are relevant, Precision@5 = 3/5.
 ### MRR (Mean Reciprocal Rank)
