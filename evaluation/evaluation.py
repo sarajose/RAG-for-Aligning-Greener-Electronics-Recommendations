@@ -23,9 +23,11 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import numpy as np
+from pathlib import Path
 from collections import defaultdict
 from dataclasses import asdict
-from pathlib import Path
+from retrieval.retrieval import HybridRetriever
 from typing import Optional
 
 from config import (
@@ -45,15 +47,17 @@ from data_models import (
     RetrievalMetrics,
     ClassificationMetrics,
 )
-from evaluation.metrics import compute_retrieval_metrics, compute_classification_metrics
+from evaluation.metrics import (
+    compute_retrieval_metrics,
+    compute_classification_metrics,
+    bootstrap_ci,
+    paired_permutation_test,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ═════════════════════════════════════════════════════════════════════════════
 # 1. Gold-standard loading
-# ═════════════════════════════════════════════════════════════════════════════
-
 
 def load_gold_standard(
     csv_path: Path = GOLD_STANDARD_CSV,
@@ -199,6 +203,243 @@ def evaluate_retrieval(
             all_retrieved_docs, all_relevant_docs, k,
         )
     return results
+
+
+# 2b. Paragraph-level (chunk-level) retrieval evaluation
+
+def evaluate_paragraph_retrieval(
+    retriever,
+    gold_path: Path = GOLD_STANDARD_CSV,
+    k_values: Optional[list[int]] = None,
+    top_k_retrieve: int = DEFAULT_TOP_K,
+    rerank_top: int = DEFAULT_RERANK_TOP,
+) -> dict[int, RetrievalMetrics]:
+    """Run **chunk-level** retrieval evaluation against the gold standard.
+
+    Unlike :func:`evaluate_retrieval` (document-level), this function does
+    **not** deduplicate chunks to documents.  A retrieved chunk is
+    considered *relevant* when its parent document matches one of the
+    gold-standard relevant documents for the query.  This measures whether
+    the retriever surfaces paragraphs from the correct legislation rather
+    than merely finding the right document somewhere in the ranked list.
+
+    Parameters
+    ----------
+    retriever
+        Fully initialised retriever.
+    gold_path : Path
+        Gold-standard CSV path.
+    k_values : list[int] | None
+        Cut-off depths (defaults to ``EVAL_K_VALUES``).
+    top_k_retrieve : int
+        Chunks to retrieve per query.
+    rerank_top : int
+        Chunks kept after reranking.
+
+    Returns
+    -------
+    dict[int, RetrievalMetrics]
+        ``{k: metrics}`` for each requested cut-off depth.
+    """
+    if k_values is None:
+        k_values = EVAL_K_VALUES
+
+    entries = load_gold_standard(gold_path)
+    query_to_docs = group_gold_by_query(entries)
+    queries = list(query_to_docs.keys())
+    print(f"[para-eval] {len(queries)} unique queries from gold standard")
+
+    max_k = max(k_values)
+    n_retrieve = max(max_k * 3, top_k_retrieve, 30)
+    n_rerank = max(max_k, rerank_top)
+
+    from evaluation.metrics import (
+        hit_at_k, recall_at_k, precision_at_k,
+        reciprocal_rank, average_precision, ndcg_at_k,
+    )
+
+    # We'll compute per-query scores manually because each chunk is
+    # either relevant (its document is in gold set) or not.
+    per_query_hits: dict[int, list[int]] = {k: [] for k in k_values}
+    per_query_recall: dict[int, list[float]] = {k: [] for k in k_values}
+    per_query_prec: dict[int, list[float]] = {k: [] for k in k_values}
+    per_query_mrr: dict[int, list[float]] = {k: [] for k in k_values}
+    per_query_ap: dict[int, list[float]] = {k: [] for k in k_values}
+    per_query_ndcg: dict[int, list[float]] = {k: [] for k in k_values}
+
+    for i, query in enumerate(queries):
+        result = retriever.retrieve(
+            query, top_k=n_retrieve, rerank_top=n_rerank,
+        )
+        relevant_docs = query_to_docs[query]
+
+        # Build a binary relevance list at chunk level
+        chunk_ids = [c.id for c in result.ranked_chunks]
+        chunk_relevance = [
+            normalise_doc_name(c.document) in relevant_docs
+            for c in result.ranked_chunks
+        ]
+        # Create pseudo-IDs so that each "relevant" chunk gets a unique ID
+        relevant_ids = {
+            cid for cid, rel in zip(chunk_ids, chunk_relevance) if rel
+        }
+
+        for k in k_values:
+            per_query_hits[k].append(hit_at_k(chunk_ids[:k], relevant_ids))
+            per_query_prec[k].append(
+                precision_at_k(chunk_ids, relevant_ids, k)
+            )
+            per_query_mrr[k].append(
+                reciprocal_rank(chunk_ids[:k], relevant_ids)
+            )
+            per_query_ap[k].append(
+                average_precision(chunk_ids[:k], relevant_ids)
+            )
+            per_query_ndcg[k].append(
+                ndcg_at_k(chunk_ids, relevant_ids, k)
+            )
+            # Recall: fraction of relevant chunks found in top-k
+            # (capped at total relevant to avoid > 1 when many chunks match)
+            n_rel_found = sum(1 for cid in chunk_ids[:k] if cid in relevant_ids)
+            n_rel_total = max(len(relevant_ids), 1)
+            per_query_recall[k].append(min(n_rel_found / n_rel_total, 1.0))
+
+        if (i + 1) % 50 == 0:
+            print(f"  [{i + 1}/{len(queries)}] queries processed (paragraph)")
+
+    print(f"[para-eval] All {len(queries)} queries processed")
+
+    results: dict[int, RetrievalMetrics] = {}
+    for k in sorted(k_values):
+        results[k] = RetrievalMetrics(
+            k=k,
+            hit_rate=float(np.mean(per_query_hits[k])),
+            recall=float(np.mean(per_query_recall[k])),
+            precision=float(np.mean(per_query_prec[k])),
+            mrr=float(np.mean(per_query_mrr[k])),
+            map_score=float(np.mean(per_query_ap[k])),
+            ndcg=float(np.mean(per_query_ndcg[k])),
+            num_queries=len(queries),
+        )
+    return results
+
+
+# 2c. Per-query score arrays (for bootstrap CI / significance tests)
+
+def per_query_retrieval_scores(
+    retriever,
+    gold_path: Path = GOLD_STANDARD_CSV,
+    k: int = 5,
+    top_k_retrieve: int = DEFAULT_TOP_K,
+    rerank_top: int = DEFAULT_RERANK_TOP,
+    level: str = "document",
+) -> dict[str, list[float]]:
+    """Return per-query metric arrays for bootstrap / significance analysis.
+
+    Parameters
+    ----------
+    retriever
+        Fully initialised retriever.
+    gold_path : Path
+        Gold-standard CSV path.
+    k : int
+        Cut-off depth for all metrics.
+    top_k_retrieve : int
+        Chunks to retrieve per query.
+    rerank_top : int
+        Chunks kept after reranking.
+    level : str
+        ``"document"`` for document-level, ``"paragraph"`` for chunk-level.
+
+    Returns
+    -------
+    dict[str, list[float]]
+        Keys: ``"hit"``, ``"recall"``, ``"precision"``, ``"mrr"``,
+        ``"ap"``, ``"ndcg"`` — each a list of per-query floats.
+    """
+    from evaluation.metrics import (
+        hit_at_k, recall_at_k, precision_at_k,
+        reciprocal_rank, average_precision, ndcg_at_k,
+    )
+
+    entries = load_gold_standard(gold_path)
+    query_to_docs = group_gold_by_query(entries)
+    queries = list(query_to_docs.keys())
+
+    n_retrieve = max(k * 3, top_k_retrieve, 30)
+    n_rerank = max(k, rerank_top)
+
+    out: dict[str, list[float]] = {
+        m: [] for m in ("hit", "recall", "precision", "mrr", "ap", "ndcg")
+    }
+
+    for query in queries:
+        result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        relevant = query_to_docs[query]
+
+        if level == "document":
+            seen: set[str] = set()
+            ranking: list[str] = []
+            for c in result.ranked_chunks:
+                canon = normalise_doc_name(c.document)
+                if canon not in seen:
+                    seen.add(canon)
+                    ranking.append(canon)
+            ids = ranking
+            rel_set = relevant
+        else:  # paragraph
+            ids = [c.id for c in result.ranked_chunks]
+            rel_set = {
+                c.id for c in result.ranked_chunks
+                if normalise_doc_name(c.document) in relevant
+            }
+
+        out["hit"].append(float(hit_at_k(ids[:k], rel_set)))
+        out["recall"].append(float(recall_at_k(ids[:k], rel_set)))
+        out["precision"].append(float(precision_at_k(ids, rel_set, k)))
+        out["mrr"].append(float(reciprocal_rank(ids[:k], rel_set)))
+        out["ap"].append(float(average_precision(ids[:k], rel_set)))
+        out["ndcg"].append(float(ndcg_at_k(ids, rel_set, k)))
+
+    return out
+
+
+# 2d. Load whitepaper recommendations
+
+def load_whitepaper_recommendations(
+    csv_path: Optional[Path] = None,
+) -> list[dict[str, str]]:
+    """Load recommendations from the whitepaper CSV (semicolon-separated).
+
+    Parameters
+    ----------
+    csv_path : Path | None
+        Defaults to ``WHITEPAPER_RECOMMENDATIONS_CSV`` from config.
+
+    Returns
+    -------
+    list[dict[str, str]]
+        Each dict has keys ``section``, ``subsection``, ``title``,
+        ``recommendation``.
+    """
+    if csv_path is None:
+        from config import WHITEPAPER_RECOMMENDATIONS_CSV
+        csv_path = WHITEPAPER_RECOMMENDATIONS_CSV
+
+    rows: list[dict[str, str]] = []
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter=";"):
+            rows.append({
+                "section": row.get("section", "").strip(),
+                "subsection": row.get("subsection", "").strip(),
+                "title": row.get("title", "").strip(),
+                "recommendation": row.get("recommendation", "").strip(),
+            })
+    logger.info(
+        "Loaded %d whitepaper recommendation rows from %s",
+        len(rows), csv_path,
+    )
+    return rows
 
 
 # 3. External benchmark evaluation
