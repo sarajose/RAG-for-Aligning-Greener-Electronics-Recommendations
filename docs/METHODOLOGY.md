@@ -154,6 +154,15 @@ sentence-transformer model (default: BAAI/bge-m3, 568 M parameters, 1024
 dimensions).  Embeddings are L2-normalised so that inner product scores
 correspond to cosine similarity.
 
+**Token-limit awareness.**  Before encoding, the pipeline audits all chunk
+texts against the model's maximum token limit (8 192 tokens for bge-m3,
+512 for mpnet / MiniLM).  Chunks that exceed the limit — whose tail tokens
+would be silently truncated by the tokenizer — are flagged with a console
+warning reporting the count and percentage of over-length texts.  This
+transparency allows the user to adjust chunking parameters if needed.
+In practice, paragraph-level EU legislative chunks rarely exceed even 512
+tokens, so truncation is unlikely with the default settings.
+
 **FAISS index** — a Hierarchical Navigable Small World (HNSW) graph is built
 for approximate nearest-neighbour search.  HNSW provides sub-linear query time
 while maintaining high recall.  The parameters are tuned for a small corpus:
@@ -185,8 +194,13 @@ contextualising our results in a legal/regulatory setting:
 | MTEB Dataset | Task | Why Relevant |
 |---|---|---|
 | LegalBenchConsumerContractsQA | legal clause retrieval | closest text register to EU legislation |
-| GerDaLIR | German legal information retrieval | cross-lingual legal retrieval |
-| LegalQuAD | German legal QA (passage-level) | passage-level matching in legal text |
+| LegalBenchCorporateLobbying | regulatory document retrieval | regulatory-adjacent legal topic |
+| NFCorpus | biomedical passage retrieval | cross-domain professional text |
+
+All three datasets are in English, matching the language of both our
+recommendation queries and the EU legislative provisions in our evidence
+corpus.  We report our pipeline's NDCG@10 alongside published MTEB scores
+for the same models to contextualise performance without overclaiming.
 
 ### 4.2 Model Selection Rationale
 
@@ -451,6 +465,8 @@ A chunk is relevant if its parent document is in the gold-standard set.  This
 is stricter: a retriever that finds the right document but buries it among many
 irrelevant chunks will have lower paragraph-level precision.
 
+#### Metric Definitions
+
 | Metric | Formula | Interpretation |
 |---|---|---|
 | Hit@k | $\mathbb{1}[\|\text{rel} \cap \text{ret@k}\| > 0]$ | Binary: did we find *anything* relevant? |
@@ -459,6 +475,35 @@ irrelevant chunks will have lower paragraph-level precision.
 | MRR | $\frac{1}{\text{rank of first relevant}}$ | Speed: how quickly is the first relevant item surfaced? |
 | MAP | $\frac{1}{\|\text{rel}\|} \sum_r \text{Prec@r} \cdot \text{rel}(r)$ | Overall ranking quality (position-sensitive) |
 | NDCG@k | $\frac{\text{DCG@k}}{\text{IDCG@k}}$ | Ranking quality with logarithmic discount for depth |
+| Mean Rank (MR) | $\frac{1}{n}\sum_q \text{rank}_q$ | Average position of first relevant item (lower is better) |
+
+#### Metric Equivalences When |relevant| = 1
+
+A distinctive property of our gold standard is that **each recommendation
+maps to exactly one EU document**.  This has important implications for
+metric interpretation:
+
+- **Recall@k ≡ Hit@k** — since there is only one relevant document,
+  finding it means 100 % recall and missing it means 0 %.  The two
+  metrics are numerically identical.
+- **Precision@k = Hit@k / k** — a deterministic function of Hit@k,
+  adding no new information.
+- **MAP ≡ MRR** — Average Precision with a single relevant item reduces
+  to the reciprocal of its rank, which is exactly MRR.
+
+Consequently, the **primary metrics** we highlight in all tables are:
+
+| Metric | Why Primary |
+|---|---|
+| **Hit@k** | Binary success — did the pipeline find the right EU document? |
+| **MRR** | Ranking speed — how high is the correct document in the list? |
+| **NDCG@k** | Ranking quality — the only metric with graded position discount |
+| **Mean Rank** | Intuitive complement to MRR — "on average, the correct document appears at position X" |
+
+The remaining metrics (Recall, Precision, MAP) are still computed and
+reported for completeness and for comparability with other studies that
+use them, but readers should note the equivalences above when
+interpreting the results.
 
 ### 8.3 Classification Metrics
 
@@ -560,13 +605,23 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Build indices from evidence
-python main.py build -i outputs/evidence.csv -m bge-m3
+python pipeline.py build -i outputs/evidence.csv -m bge-m3
 
 # 2. Evaluate retrieval on gold standard
-python main.py evaluate --gold data/gold_standard_doc_level/gold_standard.csv
+python pipeline.py evaluate --gold data/gold_standard_doc_level/gold_standard.csv
 
-# 3. Run full pipeline (retrieve + classify)
-python main.py run -i outputs/recommendations.csv \
+# 3. Run external benchmark evaluation
+python benchmarks/generate_benchmark.py          # generate benchmark JSON
+python pipeline.py benchmark -i benchmarks/gold_standard_benchmark.json
+
+# 4. Run whitepaper recommendations (retrieve + classify)
+python pipeline.py whitepaper -o outputs/whitepaper_classified.csv
+
+# 5. Run whitepaper retrieval only (no classification / no GPU required)
+python pipeline.py whitepaper --retrieve-only -o outputs/whitepaper_retrieval.csv
+
+# 6. Run full pipeline (retrieve + classify + evaluate)
+python pipeline.py run -i outputs/recommendations.csv \
                    --gold data/gold_standard_doc_level/gold_standard.csv
 ```
 

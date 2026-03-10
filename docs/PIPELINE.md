@@ -21,7 +21,7 @@ It does this in three stages:
 3. **Evaluate** the quality of both retrieval and classification against a
    hand-annotated gold standard.
 
-All models are open-source and run locally — no external API calls.
+All models are open-source and run locally.
 
 ---
 
@@ -47,25 +47,25 @@ All models are open-source and run locally — no external API calls.
                    │  outputs/indices/
         ┌──────────▼──────────────────────────────────────────┐
         │  STEP 3: RETRIEVAL  (run once per recommendation)   │
-        │                                                      │
-        │  Query = recommendation text                         │
-        │                                                      │
+        │                                                     │
+        │  Query = recommendation text                        │
+        │                                                     │
         │  BM25Retriever  ──────────────────────┐             │
         │  (keyword match of query terms        │             │
         │   against provision text)             │ RRF fusion  │
         │                                       ├───────────► │
         │  DenseRetriever ──────────────────────┘  top-2k     │
-        │  (cosine similarity between query                    │
-        │   embedding and stored embeddings)                   │
-        │                         │                            │
+        │  (cosine similarity between query                   │
+        │   embedding and stored embeddings)                  │
+        │                         │                           │
         │              ┌──────────▼──────────┐                │
         │              │  RerankedRetriever  │                │
         │              │  cross-encoder      │ ← optional     │
         │              │  scores each        │   2nd stage    │
         │              │  (query, chunk) pair│                │
         │              └──────────┬──────────┘                │
-        │                         │  top-k final chunks        │
-        └─────────────────────────┼────────────────────────────┘
+        │                         │  top-k final chunks       │
+        └─────────────────────────┼───────────────────────────┘
                                   │
         ┌─────────────▼──────────────────────┐
         │  STEP 4: RAG CLASSIFICATION        │
@@ -151,6 +151,11 @@ cosine similarity. bge-m3 was selected for its top performance on the MTEB
 Retrieval benchmark among models ≤1 B parameters, and its 8 192-token context
 window which accommodates even the longest legislative paragraphs without
 truncation.
+
+**Token-limit audit.**  Before encoding, the pipeline checks all chunk texts
+against the model's maximum token limit and prints a warning if any exceed it.
+This prevents silent truncation from going unnoticed and alerts the user to
+adjust chunking if needed.
 
 ### FAISS HNSW Index (dense search)
 
