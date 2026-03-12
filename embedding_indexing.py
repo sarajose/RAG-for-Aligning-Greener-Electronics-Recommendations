@@ -143,6 +143,63 @@ def get_embed_model(model_key: str = DEFAULT_MODEL_KEY) -> SentenceTransformer:
     return SentenceTransformer(name)
 
 
+def get_model_max_tokens(model: SentenceTransformer) -> int:
+    """Return the maximum input token length for *model*.
+
+    Inspects the model's tokenizer or known configuration.  Falls back
+    to a conservative 512 if the information cannot be determined.
+    """
+    # SentenceTransformer stores max_seq_length on the first module
+    if hasattr(model, "max_seq_length") and model.max_seq_length:
+        return int(model.max_seq_length)
+    try:
+        tok = model.tokenizer
+        if hasattr(tok, "model_max_length") and tok.model_max_length < 1_000_000:
+            return int(tok.model_max_length)
+    except Exception:
+        pass
+    return 512  # conservative fallback
+
+
+def check_token_lengths(
+    texts: list[str],
+    model: SentenceTransformer,
+    *,
+    warn: bool = True,
+) -> dict:
+    """Analyse token lengths of *texts* relative to the model's limit.
+
+    Returns a summary dict with ``max_tokens``, ``n_over``, ``pct_over``,
+    ``longest``, and ``model_limit``.  Prints a warning when any text
+    exceeds the limit and *warn* is ``True``.
+    """
+    tokenizer = model.tokenizer
+    limit = get_model_max_tokens(model)
+    lengths = [len(tokenizer.encode(t, add_special_tokens=True)) for t in texts]
+    over = [l for l in lengths if l > limit]
+    summary = {
+        "model_limit": limit,
+        "max_tokens": max(lengths) if lengths else 0,
+        "mean_tokens": float(np.mean(lengths)) if lengths else 0.0,
+        "n_over": len(over),
+        "pct_over": 100.0 * len(over) / len(lengths) if lengths else 0.0,
+        "longest": max(lengths) if lengths else 0,
+    }
+    if warn and over:
+        print(
+            f"[embed] WARNING: {len(over)}/{len(lengths)} texts "
+            f"({summary['pct_over']:.1f}%) exceed the model's "
+            f"{limit}-token limit (longest: {summary['longest']} tokens). "
+            f"Excess tokens will be silently truncated by the model."
+        )
+    elif warn:
+        print(
+            f"[embed] All {len(lengths)} texts fit within the "
+            f"{limit}-token limit (longest: {summary['longest']} tokens)."
+        )
+    return summary
+
+
 def embed_texts(
     texts: list[str],
     model: SentenceTransformer,
@@ -151,11 +208,17 @@ def embed_texts(
 ) -> np.ndarray:
     """Encode *texts* into L2-normalised dense vectors.
 
+    Performs a token-length audit before encoding.  Texts that exceed
+    the model's maximum token limit are silently truncated by the
+    underlying tokenizer — the audit log alerts the user so that
+    chunking can be adjusted if needed.
+
     Returns
     -------
     np.ndarray
         Shape ``(len(texts), dim)`` float32 embeddings.
     """
+    check_token_lengths(texts, model, warn=show_progress)
     return model.encode(
         texts,
         batch_size=batch_size,
