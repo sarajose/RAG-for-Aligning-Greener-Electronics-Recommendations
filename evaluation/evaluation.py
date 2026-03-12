@@ -176,9 +176,10 @@ def evaluate_retrieval(
     all_relevant_docs: list[set[str]] = []
 
     for i, query in enumerate(queries):
-        result = retriever.retrieve(
-            query, top_k=n_retrieve, rerank_top=n_rerank,
-        )
+        try:
+            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        except TypeError:
+            result = retriever.retrieve(query, top_k=n_rerank)
         # Deduplicate to document-level ranking (preserve first-seen order)
         seen: set[str] = set()
         doc_ranking: list[str] = []
@@ -256,6 +257,7 @@ def evaluate_paragraph_retrieval(
     from evaluation.metrics import (
         hit_at_k, recall_at_k, precision_at_k,
         reciprocal_rank, average_precision, ndcg_at_k,
+        rank_of_first_relevant as _rank_first,
     )
 
     # We'll compute per-query scores manually because each chunk is
@@ -266,11 +268,13 @@ def evaluate_paragraph_retrieval(
     per_query_mrr: dict[int, list[float]] = {k: [] for k in k_values}
     per_query_ap: dict[int, list[float]] = {k: [] for k in k_values}
     per_query_ndcg: dict[int, list[float]] = {k: [] for k in k_values}
+    per_query_rank: dict[int, list[float]] = {k: [] for k in k_values}
 
     for i, query in enumerate(queries):
-        result = retriever.retrieve(
-            query, top_k=n_retrieve, rerank_top=n_rerank,
-        )
+        try:
+            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        except TypeError:
+            result = retriever.retrieve(query, top_k=n_rerank)
         relevant_docs = query_to_docs[query]
 
         # Build a binary relevance list at chunk level
@@ -298,6 +302,9 @@ def evaluate_paragraph_retrieval(
             per_query_ndcg[k].append(
                 ndcg_at_k(chunk_ids, relevant_ids, k)
             )
+            per_query_rank[k].append(
+                _rank_first(chunk_ids[:k], relevant_ids)
+            )
             # Recall: fraction of relevant chunks found in top-k
             # (capped at total relevant to avoid > 1 when many chunks match)
             n_rel_found = sum(1 for cid in chunk_ids[:k] if cid in relevant_ids)
@@ -311,6 +318,8 @@ def evaluate_paragraph_retrieval(
 
     results: dict[int, RetrievalMetrics] = {}
     for k in sorted(k_values):
+        found_ranks = [r for r in per_query_rank[k] if r != float("inf")]
+        mr = float(np.mean(found_ranks)) if found_ranks else float("inf")
         results[k] = RetrievalMetrics(
             k=k,
             hit_rate=float(np.mean(per_query_hits[k])),
@@ -320,6 +329,7 @@ def evaluate_paragraph_retrieval(
             map_score=float(np.mean(per_query_ap[k])),
             ndcg=float(np.mean(per_query_ndcg[k])),
             num_queries=len(queries),
+            mean_rank=mr,
         )
     return results
 
@@ -360,6 +370,7 @@ def per_query_retrieval_scores(
     from evaluation.metrics import (
         hit_at_k, recall_at_k, precision_at_k,
         reciprocal_rank, average_precision, ndcg_at_k,
+        rank_of_first_relevant,
     )
 
     entries = load_gold_standard(gold_path)
@@ -370,11 +381,14 @@ def per_query_retrieval_scores(
     n_rerank = max(k, rerank_top)
 
     out: dict[str, list[float]] = {
-        m: [] for m in ("hit", "recall", "precision", "mrr", "ap", "ndcg")
+        m: [] for m in ("hit", "recall", "precision", "mrr", "ap", "ndcg", "rank")
     }
 
     for query in queries:
-        result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        try:
+            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        except TypeError:
+            result = retriever.retrieve(query, top_k=n_rerank)
         relevant = query_to_docs[query]
 
         if level == "document":
@@ -400,6 +414,7 @@ def per_query_retrieval_scores(
         out["mrr"].append(float(reciprocal_rank(ids[:k], rel_set)))
         out["ap"].append(float(average_precision(ids[:k], rel_set)))
         out["ndcg"].append(float(ndcg_at_k(ids, rel_set, k)))
+        out["rank"].append(float(rank_of_first_relevant(ids[:k], rel_set)))
 
     return out
 
@@ -521,9 +536,10 @@ def evaluate_benchmark(
         query = case["query"]
         relevant = set(case.get(id_field, []))
 
-        result = retriever.retrieve(
-            query, top_k=n_retrieve, rerank_top=n_rerank,
-        )
+        try:
+            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
+        except TypeError:
+            result = retriever.retrieve(query, top_k=n_rerank)
         retrieved_ids = [c.id for c in result.ranked_chunks]
 
         all_retrieved.append(retrieved_ids)
@@ -574,6 +590,9 @@ def format_retrieval_report(
 ) -> str:
     """Format retrieval metrics into a human-readable table.
 
+    Primary metrics (★) are those most informative when each query has
+    exactly one relevant document: Hit@k, MRR, NDCG@k, and Mean Rank.
+
     Parameters
     ----------
     metrics_by_k : dict[int, RetrievalMetrics]
@@ -587,20 +606,27 @@ def format_retrieval_report(
     m0 = next(iter(metrics_by_k.values()))
     lines = [
         "",
-        "=" * 72,
+        "=" * 82,
         f"  {title}  (n = {m0.num_queries} queries)",
-        "=" * 72,
-        f"{'k':>4} | {'Hit@k':>7} | {'Recall':>7} | {'Prec':>7} "
-        f"| {'MRR':>7} | {'MAP':>7} | {'NDCG':>7}",
-        "-" * 72,
+        "=" * 82,
+        f"{'k':>4} | {'★Hit@k':>7} | {'Recall':>7} | {'Prec':>7} "
+        f"| {'★MRR':>7} | {'MAP':>7} | {'★NDCG':>7} | {'★MR':>7}",
+        "-" * 82,
     ]
     for k, m in sorted(metrics_by_k.items()):
+        mr_str = f"{m.mean_rank:>7.1f}" if m.mean_rank != float("inf") else "    inf"
         lines.append(
             f"{k:>4} | {m.hit_rate:>7.3f} | {m.recall:>7.3f} | "
             f"{m.precision:>7.3f} | {m.mrr:>7.3f} | "
-            f"{m.map_score:>7.3f} | {m.ndcg:>7.3f}"
+            f"{m.map_score:>7.3f} | {m.ndcg:>7.3f} | {mr_str}"
         )
-    lines.append("=" * 72)
+    lines.append("=" * 82)
+    lines.append(
+        "  ★ = primary metrics (most informative when |relevant| = 1 per query)"
+    )
+    lines.append(
+        "  Note: When |relevant| = 1, Recall@k ≡ Hit@k and MAP ≡ MRR."
+    )
     return "\n".join(lines)
 
 
