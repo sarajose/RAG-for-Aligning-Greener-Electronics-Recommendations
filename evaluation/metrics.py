@@ -151,6 +151,19 @@ def reciprocal_rank(retrieved: list[str], relevant: set[str]) -> float:
             return 1.0 / rank
     return 0.0
 
+
+def rank_of_first_relevant(retrieved: list[str], relevant: set[str]) -> float:
+    """Return the 1-based rank of the first relevant item.
+
+    Returns ``float('inf')`` when no relevant item is found in
+    *retrieved*.  Useful for computing Mean Rank (MR) when each
+    query has exactly one relevant document.
+    """
+    for rank, item in enumerate(retrieved, start=1):
+        if item in relevant:
+            return float(rank)
+    return float("inf")
+
 def average_precision(retrieved: list[str], relevant: set[str]) -> float:
     """Average precision for a single query (binary relevance)."""
     if not relevant:
@@ -213,6 +226,11 @@ def compute_retrieval_metrics(
     mrrs = [reciprocal_rank(r[:k], rel) for r, rel in zip(all_retrieved, all_relevant)]
     aps = [average_precision(r[:k], rel) for r, rel in zip(all_retrieved, all_relevant)]
     ndcgs = [ndcg_at_k(r, rel, k) for r, rel in zip(all_retrieved, all_relevant)]
+    ranks = [rank_of_first_relevant(r[:k], rel) for r, rel in zip(all_retrieved, all_relevant)]
+
+    # Mean rank: only average over queries where the item was actually found
+    found_ranks = [r for r in ranks if r != float("inf")]
+    mean_r = float(np.mean(found_ranks)) if found_ranks else float("inf")
 
     return RetrievalMetrics(
         k=k,
@@ -223,6 +241,7 @@ def compute_retrieval_metrics(
         map_score=float(np.mean(aps)),
         ndcg=float(np.mean(ndcgs)),
         num_queries=n,
+        mean_rank=mean_r,
     )
 
 
