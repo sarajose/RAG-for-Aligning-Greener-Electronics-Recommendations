@@ -161,6 +161,19 @@ class RetrievalMetrics:
     """Aggregated retrieval-quality metrics at a given cut-off *k*.
 
     All scores are averaged over the query set unless stated otherwise.
+
+    When each query has exactly one relevant document (as in our gold
+    standard), several metrics become equivalent:
+
+    - Hit@k ≡ Recall@k  (since |relevant| = 1)
+    - Precision@k = Hit@k / k
+    - MAP ≡ MRR  (since there is only one relevant item)
+
+    The most discriminative metrics in this setting are **MRR** (how
+    quickly the correct document is found), **Hit@k** (binary success),
+    and **NDCG@k** (ranking quality with log-discount).  ``mean_rank``
+    reports the average position of the first relevant item (lower is
+    better; ``inf`` when the item is not found within the retrieved list).
     """
 
     k: int
@@ -171,6 +184,7 @@ class RetrievalMetrics:
     map_score: float            # Mean Average Precision
     ndcg: float                 # Normalised Discounted Cumulative Gain
     num_queries: int
+    mean_rank: float = float("inf")  # mean rank of first relevant item
 
 
 @dataclass
