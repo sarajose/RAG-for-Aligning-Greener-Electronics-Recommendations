@@ -9,15 +9,15 @@ Sub-commands
 ``build``
     Build embedding + BM25 indices from one or more evidence CSVs.
 ``evaluate``
-    Evaluate retrieval quality on the gold standard and/or an external
-    benchmark.
+    Evaluate retrieval quality on the gold standard and/or MTEB benchmark
+    data exported to JSON.
 ``classify``
     Run RAG alignment classification on a set of recommendations.
 ``whitepaper``
     Retrieve + classify the whitepaper recommendations (unlabelled) and
     export results for human evaluation.
 ``benchmark``
-    Run retrieval evaluation on an external benchmark dataset (JSON).
+    Run retrieval evaluation on MTEB benchmark data (JSON).
 ``run``
     Full pipeline: retrieve → classify → evaluate (gold standard available).
 
@@ -35,7 +35,7 @@ Examples::
     # Run on the whitepaper recommendations
     python pipeline.py whitepaper -o outputs/whitepaper_classified.csv
 
-    # Run an external benchmark
+    # Run an MTEB benchmark (JSON export)
     python pipeline.py benchmark -i benchmarks/my_benchmark.json -o outputs/benchmark_metrics.json
 
     # Full pipeline
@@ -223,7 +223,7 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
-    """Evaluate retrieval on gold standard and/or an external benchmark."""
+    """Evaluate retrieval on gold standard and/or an MTEB benchmark."""
     retriever = HybridRetriever.from_disk(
         args.model, use_reranker=not args.no_rerank,
     )
@@ -244,10 +244,10 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
             ret_metrics, "Gold-Standard Doc-Level Retrieval",
         ))
 
-    # ── External benchmark ──
+    # ── MTEB benchmark ──
     if args.benchmark and args.benchmark.exists():
 
-        print("  External Benchmark Retrieval Evaluation")
+        print("  MTEB Benchmark Retrieval Evaluation")
         bench_metrics = evaluate_benchmark(
             retriever,
             args.benchmark,
@@ -256,7 +256,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         )
         all_metrics["benchmark"] = bench_metrics
         print(format_retrieval_report(
-            bench_metrics, "External Benchmark Retrieval",
+            bench_metrics, "MTEB Benchmark Retrieval",
         ))
 
     # ── Save ──
@@ -413,7 +413,7 @@ def cmd_whitepaper(args: argparse.Namespace) -> None:
 
 
 def cmd_benchmark(args: argparse.Namespace) -> None:
-    """Run retrieval evaluation on an external benchmark dataset."""
+    """Run retrieval evaluation on an MTEB benchmark dataset."""
     retriever = HybridRetriever.from_disk(
         args.model, use_reranker=not args.no_rerank,
     )
@@ -585,7 +585,7 @@ def main() -> None:
 
     # evaluate
     p_eval = sub.add_parser(
-        "evaluate", help="Evaluate retrieval on gold standard / benchmark",
+        "evaluate", help="Evaluate retrieval on gold standard / MTEB benchmark",
     )
     p_eval.add_argument(
         "--gold", type=Path, default=GOLD_STANDARD_CSV,
@@ -593,7 +593,7 @@ def main() -> None:
     )
     p_eval.add_argument(
         "--benchmark", type=Path, default=None,
-        help="External benchmark JSON path (optional)",
+        help="MTEB benchmark JSON path (optional)",
     )
     p_eval.add_argument(
         "-m", "--model", default=DEFAULT_MODEL_KEY,
@@ -662,7 +662,7 @@ def main() -> None:
     # benchmark
     p_bench = sub.add_parser(
         "benchmark",
-        help="Run retrieval evaluation on an external benchmark (JSON)",
+        help="Run retrieval evaluation on an MTEB benchmark (JSON)",
     )
     p_bench.add_argument(
         "-i", "--input", required=True, type=Path,
