@@ -20,11 +20,10 @@
 | 1 | *(Done)* Chunk HTML evidence → CSV | ~5 min |
 | 2 | Build FAISS + BM25 indices | ~10–20 min (first run) |
 | 3 | Evaluate retrieval — gold standard | ~2–5 min |
-| 4 | Generate benchmark JSON | <1 min |
-| 5 | Evaluate retrieval — benchmark | ~2–5 min |
-| 6 | Classify whitepaper recommendations | ~2–4 h (GPU) |
-| 7 | LLM-as-judge on classifications | ~1–2 h (GPU) |
-| 8 | Full pipeline (steps 3+6+7 combined) | ~3–6 h (GPU) |
+| 4 | Evaluate retrieval — MTEB LegalBench | ~5–15 min (first run includes download) |
+| 5 | Classify whitepaper recommendations | ~2–4 h (GPU) |
+| 6 | LLM-as-judge on classifications | ~1–2 h (GPU) |
+| 7 | Full pipeline (steps 3+5+6 combined) | ~3–6 h (GPU) |
 
 ---
 
@@ -90,46 +89,27 @@ python main.py evaluate `
 
 ---
 
-## Step 4 — Generate Internal Benchmark JSON
+## Step 4 — Evaluate Retrieval on MTEB LegalBench
 
-Converts the gold standard CSV into a self-contained JSON benchmark file
-that can be shared or used for reproducible evaluation runs.
-
-```powershell
-python benchmarks/generate_benchmark.py `
-    --gold data/gold_standard_doc_level/gold_standard.csv `
-    -o benchmarks/gold_standard_benchmark.json
-```
-
-**Output**: `benchmarks/gold_standard_benchmark.json`
-
-> **Do you need an external benchmark?**  
-> The gold standard benchmark above is derived from your own annotations and
-> is sufficient for this task.  If you want to validate on a truly external
-> dataset, the closest publicly available option is the
-> [BEIR/LegalBench](https://huggingface.co/datasets/BeIR/arguana) suite or
-> the [GDPR-QA](https://huggingface.co/datasets/joelito/gdpr_qa) dataset on
-> Hugging Face. Download one of those and place it in `benchmarks/` with the
-> format `[{"query": "...", "relevant_ids": ["chunk_id_1", ...]}, ...]`.
-> **No external download is strictly required** for the main pipeline.
-
----
-
-## Step 5 — Evaluate Retrieval on Benchmark
+This project uses **`mteb/legalbench_consumer_contracts_qa`** as the external
+benchmark. The dataset is downloaded automatically from Hugging Face on first run.
 
 ```powershell
-python main.py benchmark `
-    -i benchmarks/gold_standard_benchmark.json `
-    -o outputs/metrics_benchmark.json
+python scripts/run_mteb_legalbench_eval.py `
+    --dataset mteb/legalbench_consumer_contracts_qa `
+    --split test `
+    --model bge-m3
 ```
 
 **Outputs**:
-- Console: formatted retrieval report for the benchmark
-- `outputs/metrics_benchmark.json`
+- `outputs/mteb_legalbench_metrics.csv`
+- `outputs/mteb_legalbench_metrics.json`
+
+> For a quick test run, add `--max-corpus 10000`.
 
 ---
 
-## Step 6 — Classify Whitepaper Recommendations
+## Step 5 — Classify Whitepaper Recommendations
 
 Retrieves top-k EU law chunks for each whitepaper recommendation and
 classifies the alignment label using `Qwen/Qwen2.5-7B-Instruct` (local, ~15 GB).
@@ -151,7 +131,7 @@ python main.py whitepaper `
 
 ---
 
-## Step 7 — LLM-as-Judge on Classifications
+## Step 6 — LLM-as-Judge on Classifications
 
 Re-run whitepaper classification **and** evaluate each result with the
 LLM-as-judge (`mistralai/Mistral-7B-Instruct-v0.3`).  The judge scores
@@ -169,7 +149,7 @@ python main.py whitepaper `
 
 ---
 
-## Step 8 — Full Pipeline (Retrieval → Classification → Judge)
+## Step 7 — Full Pipeline (Retrieval → Classification → Judge)
 
 Runs retrieval evaluation on the gold standard, then classifies the
 whitepaper recommendations, and finally runs the LLM-as-judge — all in
@@ -193,18 +173,50 @@ python main.py run `
 
 ---
 
-## Notebook Workflow
+## Script-First Evaluation (Recommended for Lower Memory)
 
-After any pipeline run, open the notebooks for analysis and visualisation.
-Results are cached in `outputs/` so **no re-computation happens** unless you
-set `FORCE_RERUN = True` at the top of each notebook.
+Run evaluations as Python scripts and save compact CSV/JSON outputs.
+Then use a notebook only for plotting.
+
+### A) Small Gold Standard (Document-Level Only)
+
+```powershell
+python scripts/run_gold_doc_eval.py `
+    --gold data/gold_standard_doc_level/gold_standard.csv `
+    --model bge-m3 `
+    --top-k 20 `
+    --rerank-top 10
+```
+
+Outputs:
+- `outputs/gold_doc_eval_metrics.csv`
+- `outputs/gold_doc_eval_metrics.json`
+
+### B) External MTEB Benchmark (Legal)
+
+This project uses **`mteb/legalbench_consumer_contracts_qa`**.
+The dataset is downloaded automatically from Hugging Face at first run.
+
+```powershell
+python scripts/run_mteb_legalbench_eval.py `
+    --dataset mteb/legalbench_consumer_contracts_qa `
+    --split test `
+    --model bge-m3
+```
+
+Outputs:
+- `outputs/mteb_legalbench_metrics.csv`
+- `outputs/mteb_legalbench_metrics.json`
+
+> For a quick test run, add `--max-corpus 10000`.
+
+## Notebook Workflow (Visualization Only)
+
+Use this notebook for plots only (no retrieval/indexing inside notebook):
 
 | Notebook | Purpose |
 |----------|---------|
-| `notebooks/01_retrieval_analysis.ipynb` | Compare 6 retriever configs, bootstrap CIs, permutation tests |
-| `notebooks/02_rag_evaluation.ipynb` | Classification + LLM-as-judge on gold-standard queries |
-| `notebooks/03_evaluation_metrics.ipynb` | Consolidated metrics dashboard |
-| `notebooks/04_whitepaper_evaluation.ipynb` | Whitepaper recommendations analysis + human eval export |
+| `notebooks/05_eval_visualizations_only.ipynb` | Visualize saved gold + MTEB evaluation metrics |
 
 ---
 
@@ -215,7 +227,6 @@ set `FORCE_RERUN = True` at the top of each notebook.
 | `outputs/evidence.csv` | chunking_evidence.py | All EU legislation chunks |
 | `outputs/indices/bge-m3_*.index/.pkl` | `main.py build` | FAISS + BM25 indices |
 | `outputs/metrics_retrieval.json` | `main.py evaluate` | Retrieval metrics (gold std) |
-| `outputs/metrics_benchmark.json` | `main.py benchmark` | Retrieval metrics (benchmark) |
 | `outputs/whitepaper_classified.csv` | `main.py whitepaper` | Alignment results for human eval |
 | `outputs/whitepaper_classified_retrieved_chunks.csv` | `main.py whitepaper` | k retrieved chunks per rec |
 | `outputs/whitepaper_classified_judge.csv` | `main.py whitepaper --judge` | LLM judge scores |
@@ -232,3 +243,7 @@ set `FORCE_RERUN = True` at the top of each notebook.
 | `outputs/whitepaper_evaluation.csv` | Notebook 04 | Full whitepaper eval export |
 | `outputs/whitepaper_judge.csv` | Notebook 04 | Judge scores for whitepaper |
 | `outputs/whitepaper_retrieved_chunks.csv` | Notebook 04 | k chunks per whitepaper query |
+| `outputs/gold_doc_eval_metrics.csv` | `scripts/run_gold_doc_eval.py` | Small gold-standard document-level retrieval metrics |
+| `outputs/gold_doc_eval_metrics.json` | `scripts/run_gold_doc_eval.py` | Same metrics as JSON + run metadata |
+| `outputs/mteb_legalbench_metrics.csv` | `scripts/run_mteb_legalbench_eval.py` | MTEB LegalBench retrieval metrics |
+| `outputs/mteb_legalbench_metrics.json` | `scripts/run_mteb_legalbench_eval.py` | Same metrics as JSON + run metadata |

@@ -610,9 +610,8 @@ python pipeline.py build -i outputs/evidence.csv -m bge-m3
 # 2. Evaluate retrieval on gold standard
 python pipeline.py evaluate --gold data/gold_standard_doc_level/gold_standard.csv
 
-# 3. Run external benchmark evaluation
-python benchmarks/generate_benchmark.py          # generate benchmark JSON
-python pipeline.py benchmark -i benchmarks/gold_standard_benchmark.json
+# 3. Run MTEB benchmark evaluation
+python scripts/run_mteb_legalbench_eval.py --dataset mteb/legalbench_consumer_contracts_qa --split test --model bge-m3
 
 # 4. Run whitepaper recommendations (retrieve + classify)
 python pipeline.py whitepaper -o outputs/whitepaper_classified.csv
