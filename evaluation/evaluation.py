@@ -457,10 +457,10 @@ def load_whitepaper_recommendations(
     return rows
 
 
-# 3. External benchmark evaluation
+# 3. MTEB benchmark evaluation
 
 def load_benchmark(benchmark_path: Path) -> list[dict]:
-    """Load an external retrieval benchmark from a JSON file.
+    """Load an MTEB retrieval benchmark from a JSON file.
 
     Expected schema::
 
@@ -500,7 +500,7 @@ def evaluate_benchmark(
     rerank_top: int = DEFAULT_RERANK_TOP,
     id_field: str = "relevant_ids",
 ) -> dict[int, RetrievalMetrics]:
-    """Run retrieval evaluation on an external benchmark dataset.
+    """Run retrieval evaluation on an MTEB benchmark dataset.
 
     Works with **chunk-level** (``relevant_ids``) or **document-level**
     (``relevant_docs``) gold annotations depending on *id_field*.
@@ -761,7 +761,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--benchmark", type=Path, default=None,
-        help="External benchmark JSON path (optional)",
+        help="MTEB benchmark JSON path (optional)",
     )
     parser.add_argument(
         "-m", "--model", default=DEFAULT_MODEL_KEY,
@@ -798,17 +798,17 @@ def main() -> None:
         )
         print(format_retrieval_report(ret_metrics, "Gold-Standard Retrieval"))
 
-    # ── External benchmark ──
+    # ── MTEB benchmark ──
     bench_metrics = None
     if args.benchmark and args.benchmark.exists():
-        print("\n>>> External benchmark evaluation")
+        print("\n>>> MTEB benchmark evaluation")
         bench_metrics = evaluate_benchmark(
             retriever,
             args.benchmark,
             top_k_retrieve=args.top_k,
             rerank_top=args.rerank_top,
         )
-        print(format_retrieval_report(bench_metrics, "External Benchmark"))
+        print(format_retrieval_report(bench_metrics, "MTEB Benchmark"))
 
     # ── Save ──
     if args.output:
