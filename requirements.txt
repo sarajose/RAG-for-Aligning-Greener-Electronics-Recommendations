@@ -26,6 +26,7 @@ pandas>=2.0
 
 # External benchmark loading (MTEB datasets from Hugging Face)
 datasets>=2.18
+mteb>=1.14
 
 # Utilities
 tqdm>=4.65
