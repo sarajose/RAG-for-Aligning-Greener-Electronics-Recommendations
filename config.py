@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
-OUTPUT_DIR = BASE_DIR / "outputs"
+OUTPUT_DIR = Path("D:/outputs")  # Use D: drive for outputs
 INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
@@ -26,8 +26,8 @@ for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
 
 # Default file paths
 
-EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"
-EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"
+EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"  # D: drive
+EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"  # D: drive
 GOLD_STANDARD_CSV = GOLD_STANDARD_DIR / "gold_standard.csv"
 WHITEPAPER_RECOMMENDATIONS_CSV = DATA_DIR / "recommendations_whitepaper" / "recommendations_empty.csv"
 
