@@ -54,6 +54,7 @@ from config import (
     ALIGNMENT_LABELS,
     BENCHMARK_DIR,
     DEFAULT_MODEL_KEY,
+    EVIDENCE_CSV,
     DEFAULT_TOP_K,
     DEFAULT_RERANK_TOP,
     EMBEDDING_MODELS,
@@ -64,6 +65,12 @@ from config import (
 )
 from data_models import ClassificationResult, Recommendation
 from embedding_indexing import build_index, build_merged_index
+from evaluation.experiment_commands import (
+    cmd_download_models,
+    cmd_mteb_eval,
+    cmd_robustness,
+    cmd_unified_eval,
+)
 from retrieval.retrieval import HybridRetriever
 from evaluation.evaluation import (
     evaluate_retrieval,
@@ -72,7 +79,6 @@ from evaluation.evaluation import (
     format_retrieval_report,
     format_classification_report,
     save_metrics_json,
-    save_per_query_results,
 )
 
 logging.basicConfig(
@@ -709,6 +715,77 @@ def main() -> None:
         help="Run LLM-as-judge on classifications and save scores",
     )
 
+    # download-models
+    p_dl = sub.add_parser(
+        "download-models", help="Pre-download embedding/reranker/LLM models",
+    )
+    p_dl.add_argument(
+        "--embedding-models",
+        nargs="+",
+        default=["bge-m3", "mpnet", "minilm"],
+        help="Embedding model keys to pre-download",
+    )
+    p_dl.add_argument(
+        "--include-llms",
+        action="store_true",
+        help="Also pre-download classifier/judge LLM models",
+    )
+
+    # mteb-eval
+    p_mteb = sub.add_parser(
+        "mteb-eval", help="Evaluate retrieval on MTEB LegalBenchConsumerContractsQA",
+    )
+    p_mteb.add_argument("--dataset", default="mteb/legalbench_consumer_contracts_qa")
+    p_mteb.add_argument("--split", default="test")
+    p_mteb.add_argument("--model", default=DEFAULT_MODEL_KEY)
+    p_mteb.add_argument("--top-k", type=int, default=50)
+    p_mteb.add_argument("--rerank-top", type=int, default=20)
+    p_mteb.add_argument("--no-rerank", action="store_true")
+    p_mteb.add_argument("--k-values", type=int, nargs="+", default=EVAL_K_VALUES)
+    p_mteb.add_argument("--max-corpus", type=int, default=None)
+    p_mteb.add_argument("--csv-out", type=Path, default=OUTPUT_DIR / "mteb_legalbench_metrics.csv")
+    p_mteb.add_argument("--json-out", type=Path, default=OUTPUT_DIR / "mteb_legalbench_metrics.json")
+
+    # unified-eval
+    p_unified = sub.add_parser(
+        "unified-eval", help="Unified retrieval evaluation runner for thesis experiments",
+    )
+    p_unified.add_argument(
+        "--models",
+        nargs="+",
+        default=[DEFAULT_MODEL_KEY, "mpnet", "minilm"],
+        help="Embedding model keys for comparison",
+    )
+    p_unified.add_argument("--gold-csv", type=Path, default=GOLD_STANDARD_CSV)
+    p_unified.add_argument("--whitepaper-csv", type=Path, default=WHITEPAPER_RECOMMENDATIONS_CSV)
+    p_unified.add_argument("--mteb-dataset", default="mteb/legalbench_consumer_contracts_qa")
+    p_unified.add_argument("--mteb-split", default="test")
+    p_unified.add_argument("--max-corpus", type=int, default=None)
+    p_unified.add_argument("--full-mteb", action="store_true")
+    p_unified.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    p_unified.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
+    p_unified.add_argument("--export-k", type=int, default=10)
+    p_unified.add_argument("--k-values", type=int, nargs="+", default=EVAL_K_VALUES)
+    p_unified.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_unified")
+    p_unified.add_argument("--skip-reranker", action="store_true")
+    p_unified.add_argument("--force-cpu", action="store_true")
+    p_unified.add_argument("--skip-mteb", action="store_true")
+    p_unified.add_argument("--skip-whitepaper", action="store_true")
+    p_unified.add_argument("--auto-build-indices", action="store_true")
+    p_unified.add_argument("--evidence-csv", type=Path, default=EVIDENCE_CSV)
+
+    # robustness
+    p_robust = sub.add_parser(
+        "robustness", help="Run retrieval robustness and ablation analysis",
+    )
+    p_robust.add_argument("--model", default=DEFAULT_MODEL_KEY)
+    p_robust.add_argument("--gold-csv", type=Path, default=GOLD_STANDARD_CSV)
+    p_robust.add_argument("--k", type=int, default=10)
+    p_robust.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    p_robust.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
+    p_robust.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_unified" / "robustness")
+    p_robust.add_argument("--skip-reranker", action="store_true")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -723,6 +800,14 @@ def main() -> None:
         cmd_benchmark(args)
     elif args.command == "run":
         cmd_run(args)
+    elif args.command == "download-models":
+        cmd_download_models(args)
+    elif args.command == "mteb-eval":
+        cmd_mteb_eval(args)
+    elif args.command == "unified-eval":
+        cmd_unified_eval(args)
+    elif args.command == "robustness":
+        cmd_robustness(args)
 
 
 if __name__ == "__main__":
