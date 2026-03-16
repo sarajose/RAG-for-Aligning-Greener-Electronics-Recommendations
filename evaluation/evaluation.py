@@ -5,8 +5,8 @@ Responsibilities
 ----------------
 1. **Document-level retrieval evaluation** against the manually-annotated
    gold standard (``gold_standard_doc_level/gold_standard.csv``).
-2. **External benchmark evaluation** (e.g. MLEB GDPR Holdings) for
-   validating retrieval on out-of-domain legal data.
+2. **MTEB benchmark evaluation** for validating retrieval on out-of-domain
+    legal data.
 3. **Classification evaluation** against gold-standard alignment labels.
 4. **Report generation** — human-readable tables and JSON export.
 
