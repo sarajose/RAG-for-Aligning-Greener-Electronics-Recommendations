@@ -1,249 +1,169 @@
-# Commands Reference — RAG Pipeline for Greener Electronics
+﻿# Commands Reference — Unified Thesis Evaluation Pipeline
 
-> **Prerequisites**: activate the virtualenv first.
-> ```powershell
-> .\venv\Scripts\Activate.ps1
-> ```
->
-> All commands are run from the repository root.  
-> Chunking (`retrieval/chunking_evidence.py`) is **already done** — the files
-> `outputs/evidence.csv` and `outputs/evidence_recommendation.csv` already exist.
-> Start from **Step 2** if indices are already built, or **Step 3** if you only
-> want to re-run retrieval and later steps.
+This workflow keeps evaluation in Python scripts and visualization in one notebook.
 
----
-
-## Overview
-
-| Step | What it does | Estimated time |
-|------|-------------|----------------|
-| 1 | *(Done)* Chunk HTML evidence → CSV | ~5 min |
-| 2 | Build FAISS + BM25 indices | ~10–20 min (first run) |
-| 3 | Evaluate retrieval — gold standard | ~2–5 min |
-| 4 | Evaluate retrieval — MTEB LegalBench | ~5–15 min (first run includes download) |
-| 5 | Classify whitepaper recommendations | ~2–4 h (GPU) |
-| 6 | LLM-as-judge on classifications | ~1–2 h (GPU) |
-| 7 | Full pipeline (steps 3+5+6 combined) | ~3–6 h (GPU) |
-
----
-
-## Step 1 — Chunking (already done, skip if CSVs exist)
+## 0) Activate Environment
 
 ```powershell
-# Evidence HTML → outputs/evidence.csv
-python retrieval/chunking_evidence.py `
-    -i data/evidence `
-    -o outputs/evidence.csv
-
-# Recommendation stub CSV is already at:
-#   data/recommendations_whitepaper/recommendations_empty.csv
+.\venv\Scripts\Activate.ps1
 ```
 
----
-
-## Step 2 — Build Search Indices
-
-Build the FAISS (dense) and BM25 (sparse) indices from the evidence CSV.
-The indices are saved to `outputs/indices/` and only need to be built once.
+## 1) Install Dependencies
 
 ```powershell
-python main.py build `
-    -i outputs/evidence.csv `
-    -m bge-m3
+pip install -r requirements.txt
 ```
 
-**Outputs**:
-- `outputs/indices/bge-m3_faiss.index`
-- `outputs/indices/bge-m3_bm25.pkl`
-- `outputs/indices/bge-m3_chunks.pkl`
+## 2) (Optional) Pre-download Models
 
-> Use `-m minilm` for a faster/lighter run during development.
-
----
-
-## Step 3 — Evaluate Retrieval (Gold Standard)
-
-Evaluates document-level and paragraph-level retrieval quality against the
-hand-annotated gold standard CSV using Hit@k, Recall@k, MRR, MAP, NDCG@k at
-k ∈ {1, 3, 5, 10, 20}.
+This avoids repeated Hugging Face downloads during evaluation runs.
 
 ```powershell
-python main.py evaluate `
-    --gold data/gold_standard_doc_level/gold_standard.csv `
-    -o outputs/metrics_retrieval.json
+python pipeline.py download-models
 ```
 
-Optional flags:
+Optional (large download):
+
 ```powershell
-python main.py evaluate `
-    --gold data/gold_standard_doc_level/gold_standard.csv `
-    --no-rerank `          # skip cross-encoder reranker (faster)
-    -k 20 `               # top-k for retrieval
-    --rerank-top 10 `     # how many to keep after reranking
-    -o outputs/metrics_retrieval.json
+python pipeline.py download-models --include-llms
 ```
 
-**Outputs**:
-- Console: formatted retrieval report
-- `outputs/metrics_retrieval.json`: metric values as JSON
+## 3) Build Retrieval Indices (per embedding model)
 
----
-
-## Step 4 — Evaluate Retrieval on MTEB LegalBench
-
-This project uses **`mteb/legalbench_consumer_contracts_qa`** as the external
-benchmark. The dataset is downloaded automatically from Hugging Face on first run.
+Run once per model key you want to compare:
 
 ```powershell
-python scripts/run_mteb_legalbench_eval.py `
-    --dataset mteb/legalbench_consumer_contracts_qa `
-    --split test `
-    --model bge-m3
+python main.py build -i outputs/evidence.csv -m bge-m3
+python main.py build -i outputs/evidence.csv -m mpnet
+python main.py build -i outputs/evidence.csv -m minilm
 ```
 
-**Outputs**:
-- `outputs/mteb_legalbench_metrics.csv`
-- `outputs/mteb_legalbench_metrics.json`
+Index outputs are stored in `outputs/indices/`.
 
-> For a quick test run, add `--max-corpus 10000`.
+## 4) Run Unified Evaluation
 
----
-
-## Step 5 — Classify Whitepaper Recommendations
-
-Retrieves top-k EU law chunks for each whitepaper recommendation and
-classifies the alignment label using `Qwen/Qwen2.5-7B-Instruct` (local, ~15 GB).
+This single command runs:
+- Gold-standard document-level retrieval evaluation (multiple methods).
+- MTEB LegalBench chunk-level evaluation (model comparison).
+- Top-k retrieved chunk export for gold-standard queries.
+- Top-k retrieved chunk export for whitepaper recommendations.
 
 ```powershell
-python main.py whitepaper `
-    -i data/recommendations_whitepaper/recommendations_empty.csv `
-    -o outputs/whitepaper_classified.csv
-```
-
-**Outputs**:
-- `outputs/whitepaper_classified.csv` — one row per recommendation with
-  `alignment_label`, `justification`, `cited_chunk_ids`, `top_chunk_texts`,
-  `retrieved_documents`, `human_label` (empty), `human_notes` (empty)
-- `outputs/whitepaper_classified_retrieved_chunks.csv` — one row per
-  (recommendation, chunk) pair with full chunk text for human evaluation
-
-> Add `--retrieve-only` to skip the LLM and only export retrieval results.
-
----
-
-## Step 6 — LLM-as-Judge on Classifications
-
-Re-run whitepaper classification **and** evaluate each result with the
-LLM-as-judge (`mistralai/Mistral-7B-Instruct-v0.3`).  The judge scores
-label correctness, justification quality, and evidence usage (1–5 each).
-
-```powershell
-python main.py whitepaper `
-    -i data/recommendations_whitepaper/recommendations_empty.csv `
-    -o outputs/whitepaper_classified.csv `
-    --judge
-```
-
-**Additional output**:
-- `outputs/whitepaper_classified_judge.csv` — judge scores and reasoning per recommendation
-
----
-
-## Step 7 — Full Pipeline (Retrieval → Classification → Judge)
-
-Runs retrieval evaluation on the gold standard, then classifies the
-whitepaper recommendations, and finally runs the LLM-as-judge — all in
-one command.
-
-```powershell
-python main.py run `
-    --gold data/gold_standard_doc_level/gold_standard.csv `
-    -i data/recommendations_whitepaper/recommendations_empty.csv `
-    -o outputs/classified.csv `
-    --judge
-```
-
-**Outputs** (in `outputs/`):
-| File | Contents |
-|------|---------|
-| `classified.csv` | Alignment labels + justifications |
-| `classified_retrieved_chunks.csv` | k retrieved chunks per recommendation |
-| `judge_results.csv` | LLM-as-judge scores per classification |
-| `metrics.json` | Retrieval + classification metrics |
-
----
-
-## Script-First Evaluation (Recommended for Lower Memory)
-
-Run evaluations as Python scripts and save compact CSV/JSON outputs.
-Then use a notebook only for plotting.
-
-### A) Small Gold Standard (Document-Level Only)
-
-```powershell
-python scripts/run_gold_doc_eval.py `
-    --gold data/gold_standard_doc_level/gold_standard.csv `
-    --model bge-m3 `
+python pipeline.py unified-eval `
+    --models bge-m3 mpnet minilm `
+    --k-values 1 3 5 10 20 `
     --top-k 20 `
-    --rerank-top 10
+    --rerank-top 10 `
+    --export-k 10
 ```
 
-Outputs:
-- `outputs/gold_doc_eval_metrics.csv`
-- `outputs/gold_doc_eval_metrics.json`
-
-### B) External MTEB Benchmark (Legal)
-
-This project uses **`mteb/legalbench_consumer_contracts_qa`**.
-The dataset is downloaded automatically from Hugging Face at first run.
+Full-corpus MTEB run (no corpus cap):
 
 ```powershell
-python scripts/run_mteb_legalbench_eval.py `
-    --dataset mteb/legalbench_consumer_contracts_qa `
-    --split test `
-    --model bge-m3
+python pipeline.py unified-eval `
+    --models bge-m3 mpnet minilm `
+    --k-values 1 3 5 10 20 `
+    --top-k 20 `
+    --rerank-top 10 `
+    --export-k 10 `
+    --full-mteb
 ```
 
-Outputs:
-- `outputs/mteb_legalbench_metrics.csv`
-- `outputs/mteb_legalbench_metrics.json`
+Faster test run:
 
-> For a quick test run, add `--max-corpus 10000`.
+```powershell
+python pipeline.py unified-eval `
+    --models bge-m3 `
+    --max-corpus 10000
+```
 
-## Notebook Workflow (Visualization Only)
+Low-memory baseline run (CPU + automatic index build):
 
-Use this notebook for plots only (no retrieval/indexing inside notebook):
+```powershell
+python pipeline.py unified-eval `
+    --models minilm `
+    --skip-reranker `
+    --force-cpu `
+    --max-corpus 2000 `
+    --auto-build-indices
+```
 
-| Notebook | Purpose |
-|----------|---------|
-| `notebooks/05_eval_visualizations_only.ipynb` | Visualize saved gold + MTEB evaluation metrics |
+## 5) Visualize Results
 
----
+Use the single notebook:
 
-## Quick-Reference: All Output Files
+- `notebooks/05_eval_visualizations_only.ipynb`
 
-| File | Generated by | Description |
-|------|-------------|-------------|
-| `outputs/evidence.csv` | chunking_evidence.py | All EU legislation chunks |
-| `outputs/indices/bge-m3_*.index/.pkl` | `main.py build` | FAISS + BM25 indices |
-| `outputs/metrics_retrieval.json` | `main.py evaluate` | Retrieval metrics (gold std) |
-| `outputs/whitepaper_classified.csv` | `main.py whitepaper` | Alignment results for human eval |
-| `outputs/whitepaper_classified_retrieved_chunks.csv` | `main.py whitepaper` | k retrieved chunks per rec |
-| `outputs/whitepaper_classified_judge.csv` | `main.py whitepaper --judge` | LLM judge scores |
-| `outputs/classified.csv` | `main.py run` | Full pipeline alignment results |
-| `outputs/classified_retrieved_chunks.csv` | `main.py run` | k retrieved chunks per rec |
-| `outputs/judge_results.csv` | `main.py run --judge` | LLM judge scores |
-| `outputs/retrieval_comparison.csv` | Notebook 01 | 6-retriever metric comparison |
-| `outputs/retrieval_paragraph_comparison.csv` | Notebook 01 | Paragraph-level metrics |
-| `outputs/retrieval_bootstrap_ci.csv` | Notebook 01 | 95 % bootstrap confidence intervals |
-| `outputs/retrieval_per_query_scores.json` | Notebook 01 | Per-query score arrays |
-| `outputs/classifications.csv` | Notebook 02 | Gold-std proxy classifications |
-| `outputs/classifications_full.csv` | Notebook 02 | Classifications + full chunk texts |
-| `outputs/judge_results.csv` | Notebook 02 | Judge scores for gold-std proxies |
-| `outputs/whitepaper_evaluation.csv` | Notebook 04 | Full whitepaper eval export |
-| `outputs/whitepaper_judge.csv` | Notebook 04 | Judge scores for whitepaper |
-| `outputs/whitepaper_retrieved_chunks.csv` | Notebook 04 | k chunks per whitepaper query |
-| `outputs/gold_doc_eval_metrics.csv` | `scripts/run_gold_doc_eval.py` | Small gold-standard document-level retrieval metrics |
-| `outputs/gold_doc_eval_metrics.json` | `scripts/run_gold_doc_eval.py` | Same metrics as JSON + run metadata |
-| `outputs/mteb_legalbench_metrics.csv` | `scripts/run_mteb_legalbench_eval.py` | MTEB LegalBench retrieval metrics |
-| `outputs/mteb_legalbench_metrics.json` | `scripts/run_mteb_legalbench_eval.py` | Same metrics as JSON + run metadata |
+It reads outputs from `outputs/eval_unified/` and plots:
+- Gold document-level method/model comparison.
+- MTEB chunk-level comparison.
+- Whitepaper retrieval inspection tables/charts.
+
+## Main Output Files
+
+All unified outputs are saved in `outputs/eval_unified/`.
+
+| File | Description |
+|------|-------------|
+| `metrics_all.csv` | All metrics across datasets/methods/models/k |
+| `ranking_k10.csv` | Publication-friendly ranking at k=10 |
+| `run_summary.json` | Run metadata and output pointers |
+| `gold_retrieved_chunks_<model>_<method>.csv` | Top-k chunks per gold query |
+| `mteb_retrieved_chunks_<model>_<method>.csv` | Top-k chunks per MTEB query |
+| `whitepaper_retrieved_chunks_<model>_<method>.csv` | Top-k chunks per whitepaper recommendation |
+
+## Methodology Mapping
+
+- Retrieval-first, then interpretation.
+- In-domain benchmark: gold-standard document links.
+- External benchmark context: MTEB LegalBench chunk retrieval.
+- Application stage: whitepaper recommendations with exported retrieved evidence for review.
+
+## 6) Whitepaper LLM Classification + Judge
+
+When new recommendations are added to the whitepaper CSV, run:
+
+```powershell
+python pipeline.py whitepaper `
+    --input data/recommendations_whitepaper/recommendations_empty.csv `
+    --model bge-m3 `
+    --top-k 10 `
+    --rerank-top 5 `
+    --judge
+```
+
+Low-VRAM mode:
+
+```powershell
+python pipeline.py whitepaper `
+    --input data/recommendations_whitepaper/recommendations_empty.csv `
+    --model minilm `
+    --no-rerank `
+    --judge
+```
+
+Outputs are written to `outputs/whitepaper_classified.csv` and companion retrieved/judge CSV files.
+
+## 7) Robustness and Publishability Exports
+
+```powershell
+python pipeline.py robustness `
+    --model bge-m3 `
+    --k 10
+```
+
+This generates CI tables, pairwise permutation tests, ablation deltas,
+error categories, and hard-negative cases in `outputs/eval_unified/robustness/`.
+
+## 8) Reproducibility Manifest
+
+No dedicated manifest script is included in this repository. For reproducibility,
+store the exact command, git commit hash, and generated files under `outputs/eval_unified/`.
+
+## 9) Human Agreement (Two Raters)
+
+After evaluators complete `evaluator_1_label` and `evaluator_2_label` in
+`outputs/whitepaper_classified.csv`, compute Cohen's kappa in a notebook or stats tool.
+
+
+

@@ -1,4 +1,4 @@
-# PIPELINE.md — RAG Pipeline for Greener Electronics Alignment
+﻿# PIPELINE.md — RAG Pipeline for Greener Electronics Alignment
 
 > This document is self-contained. It describes what the pipeline does, why each
 > component exists, and how to run it end-to-end.
@@ -247,7 +247,8 @@ Dense+Reranker, or Hybrid+Reranker (recommended).
 | 5 | Dense + Reranker | ✓ | ✓ |
 | 6 | Hybrid + Reranker | ✓ | ✓ ← default |
 
-All six are evaluated in `notebooks/01_retrieval_analysis.ipynb`.
+All six are evaluated by `pipeline.py unified-eval`, with plots in
+`notebooks/05_eval_visualizations_only.ipynb`.
 
 ---
 
@@ -461,16 +462,19 @@ python main.py run -i outputs/recommendations.csv \
                    --gold data/gold_standard_doc_level/gold_standard.csv
 ```
 
-### Notebooks (recommended for research)
+### Unified Evaluation + Visualization
 
-Run in order from the `notebooks/` directory:
+Run evaluation in Python first:
 
-| # | Notebook | What It Does |
-|---|----------|-------------|
-| 1 | `01_retrieval_analysis.ipynb` | Compares all 6 retrieval configurations at document + paragraph level; bootstrap CIs; paired significance tests; error analysis |
-| 2 | `02_rag_evaluation.ipynb` | Runs alignment classification; LLM-as-judge scoring; score distributions by label |
-| 3 | `03_evaluation_metrics.ipynb` | Consolidated breakdown of all evaluation metrics |
-| 4 | `04_whitepaper_evaluation.ipynb` | Applies the pipeline to the 48 whitepaper recommendations; exports a CSV ready for human annotation |
+```bash
+python pipeline.py unified-eval --models bge-m3 mpnet minilm
+```
+
+Then use this notebook for visualization only:
+
+| Notebook | What It Does |
+|---|---|
+| `05_eval_visualizations_only.ipynb` | Plots gold doc-level and MTEB chunk-level comparisons and inspects whitepaper retrieved chunks |
 
 ---
 
@@ -502,11 +506,11 @@ Run in order from the `notebooks/` directory:
 │   ├── evaluation.py          # Load gold standard; doc-level + para-level evaluation
 │   └── metrics.py             # Hit@k, Recall, NDCG, MAP, F1, bootstrap CI, permutation test
 │
+├── pipeline.py                # Unified CLI: build/evaluate/classify/whitepaper/benchmark
+│                              # plus unified-eval, mteb-eval, robustness, download-models
+│
 ├── notebooks/
-│   ├── 01_retrieval_analysis.ipynb      # Retrieval comparison + statistical analysis
-│   ├── 02_rag_evaluation.ipynb          # Classification + LLM judge
-│   ├── 03_evaluation_metrics.ipynb      # Consolidated metric breakdown
-│   └── 04_whitepaper_evaluation.ipynb   # Whitepaper → human-evaluation export
+│   └── 05_eval_visualizations_only.ipynb  # Unified evaluation visualizations
 │
 ├── docs/
 │   ├── PIPELINE.md            # This file — pipeline walkthrough and reference
@@ -526,3 +530,8 @@ Run in order from the `notebooks/` directory:
         ├── bge-m3_bm25.pkl                    # BM25Okapi index
         └── bge-m3_chunks.pkl                  # Chunk list (aligned with index positions)
 ```
+
+
+
+
+

@@ -1,4 +1,4 @@
-# Pipeline Documentation — RAG for Aligning Greener Electronics Recommendations
+﻿# Pipeline Documentation — RAG for Aligning Greener Electronics Recommendations
 
 ## Table of Contents
 
@@ -25,16 +25,10 @@ sector align with the European Union's regulatory framework.  The pipeline takes
 free-text recommendations — drawn from academic literature and a dedicated
 whitepaper — and (i) retrieves the most relevant EU legislative provisions,
 (ii) classifies the degree of alignment using an open-source large language model,
-and (iii) evaluates the quality of both retrieval and classification through a
-multi-tier evaluation framework.
+and (iii) evaluates the quality of both retrieval and classification through a multi-tier evaluation framework.
 
-The motivation is twofold.  First, the volume of EU regulatory text relevant to
-green electronics (ESPR, REACH, RoHS, WEEE, Battery Regulation, and many more)
-makes manual cross-referencing impractical.  A reliable automated pipeline can
-accelerate this mapping for researchers and policymakers alike.  Second, by using
-only open-source, locally hosted models, the pipeline ensures full reproducibility,
-eliminates per-token API costs, and keeps potentially sensitive recommendation
-texts off external servers.
+The motivation is twofold.  First, the volume of EU regulatory text relevant to green electronics (ESPR, REACH, RoHS, WEEE, Battery Regulation, and many more) makes manual cross-referencing impractical.  A reliable automated pipeline can accelerate this mapping for researchers and policymakers alike.  Second, by using
+only open-source, locally hosted models, the pipeline ensures full reproducibility, eliminates per-token API costs, and keeps potentially sensitive recommendation texts off external servers.
 
 ---
 
@@ -52,38 +46,20 @@ The evaluation is organised in three stages, each providing a different lens on
 pipeline quality:
 
 **Stage 1 — Document-level retrieval (gold standard).**
-The first question is: given a sustainability recommendation, can the retriever
-identify the correct EU legislation document?  We answer this using a
-hand-annotated gold standard (`gold_standard.csv`) containing 273 entries across
-13 academic papers, each linking a recommendation or statement to one of 19 EU
-regulatory documents.  Retrieval quality is measured at multiple cut-off depths
-(k ∈ {1, 3, 5, 10, 20}) using standard information-retrieval metrics: Hit@k,
-Recall@k, Precision@k, MRR, MAP, and NDCG@k.  For document-level evaluation,
-retrieved chunks are deduplicated to their parent documents before scoring.
+The first question is: given a sustainability recommendation, can the retriever identify the correct EU legislation document?  We answer this using a hand-annotated gold standard (`gold_standard.csv`) containing 273 entries across 13 academic papers, each linking a recommendation or statement to one of 19 EU regulatory documents.  Retrieval quality is measured at multiple cut-off depths
+(k ∈ {1, 3, 5, 10, 20}) using standard information-retrieval metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, and NDCG@k.  For document-level evaluation, retrieved chunks are deduplicated to their parent documents before scoring.
 
 **Stage 2 — Paragraph-level retrieval (gold standard).**
-Document-level evaluation tells us whether the right law was found, but not
-whether the right *provisions* were surfaced.  Paragraph-level (chunk-level)
-evaluation treats each retrieved chunk individually.  A chunk is defined as
-relevant if its parent document appears in the gold-standard set for that
-query.  This is a stricter test: it penalises retrievers that waste top-k
-positions on chunks from irrelevant legislation, even if the correct document
-appears elsewhere in the ranked list.  The same six metrics are reported at the
-same cut-off depths.
+Document-level evaluation tells us whether the right law was found, but not whether the right *provisions* were surfaced.  Paragraph-level (chunk-level) evaluation treats each retrieved chunk individually.  A chunk is defined as relevant if its parent document appears in the gold-standard set for that query.  This is a stricter test: it penalises retrievers that waste top-k positions on chunks from irrelevant legislation, even if the correct document
+appears elsewhere in the ranked list.  The same six metrics are reported at the same cut-off depths.
 
 **Stage 3 — Whitepaper recommendation evaluation (unlabelled).**
-The whitepaper contains 48 sustainability recommendations spanning four lifecycle
-phases (Design & Material Selection, Manufacturing, Use, End-of-Life).  These
-have no ground-truth labels.  The pipeline retrieves evidence and classifies
-alignment for each recommendation, and the outputs are exported to a CSV
-structured for human evaluation.  This stage demonstrates the pipeline's
-practical applicability and produces artefacts for qualitative assessment,
+The whitepaper contains 48 sustainability recommendations spanning four lifecycle phases (Design & Material Selection, Manufacturing, Use, End-of-Life).  These have no ground-truth labels.  The pipeline retrieves evidence and classifies alignment for each recommendation, and the outputs are exported to a CSV structured for human evaluation.  This stage demonstrates the pipeline's practical applicability and produces artefacts for qualitative assessment,
 including inter-annotator agreement analysis if multiple evaluators are used.
 
 ### 2.3 Experimental Design (Retrieval Comparison)
 
-To determine the best retrieval configuration, six retrieval strategies are
-compared factorially:
+To determine the best retrieval configuration, six retrieval strategies are compared factorially:
 
 | # | Base Retriever | Reranker | Description |
 |---|---|---|---|
@@ -94,31 +70,17 @@ compared factorially:
 | 5 | Dense (FAISS) | Cross-encoder | FAISS + ms-marco-MiniLM reranking |
 | 6 | Hybrid (RRF) | Cross-encoder | Full pipeline (recommended) |
 
-Each configuration is evaluated on the same query set at both document and
-paragraph level.  Metrics are accompanied by 95 % bootstrap confidence intervals
-(10 000 resamples, percentile method) and pairwise statistical significance is
-assessed via two-sided paired permutation tests (10 000 permutations).
-
+Each configuration is evaluated on the same query set at both document and paragraph level.  Metrics are accompanied by 95 % bootstrap confidence intervals (10 000 resamples, percentile method) and pairwise statistical significance is assessed via two-sided paired permutation tests (10 000 permutations).
 ---
 
 ## 3. Data Pipeline
 
 ### 3.1 Evidence Corpus (EU Legislation)
 
-The evidence corpus consists of consolidated texts from six core EU regulatory
-documents obtained as HTML from EUR-Lex, supplemented by 19 additional
-recommendation and strategy documents.  Together these cover the principal
-legislation relevant to greener electronics: the Ecodesign for Sustainable
-Products Regulation (ESPR), REACH, RoHS, WEEE Directive, Battery Regulation,
-Waste Framework Directive, and associated strategies.
+The evidence corpus consists of consolidated texts from six core EU regulatory documents obtained as HTML from EUR-Lex, supplemented by 19 additional recommendation and strategy documents.  Together these cover the principal legislation relevant to greener electronics: the Ecodesign for Sustainable Products Regulation (ESPR), REACH, RoHS, WEEE Directive, Battery Regulation, Waste Framework Directive, and associated strategies.
 
-**Chunking** (`retrieval/chunking_evidence.py`) parses the HTML DOM using
-BeautifulSoup, extracting the legal hierarchy — Document → Chapter/Title →
-Article → Paragraph.  Each chunk corresponds to one numbered paragraph within
-an article, preserving the full hierarchical context.  List items remain
-attached to their parent paragraph to preserve the integrity of legal clauses
-(e.g. article sub-points (a), (b), (c) stay together).  The output is a flat
-CSV (`outputs/evidence.csv`) with one row per provision.
+**Chunking** (`retrieval/chunking_evidence.py`) parses the HTML DOM using BeautifulSoup, extracting the legal hierarchy — Document → Chapter/Title → Article → Paragraph.  Each chunk corresponds to one numbered paragraph within an article, preserving the full hierarchical context.  List items remain attached to their parent paragraph to preserve the integrity of legal clauses
+(e.g. article sub-points (a), (b), (c) stay together).  The output is a flat CSV (`outputs/evidence.csv`) with one row per provision.
 
 Each chunk carries the following fields:
 
@@ -611,7 +573,7 @@ python pipeline.py build -i outputs/evidence.csv -m bge-m3
 python pipeline.py evaluate --gold data/gold_standard_doc_level/gold_standard.csv
 
 # 3. Run MTEB benchmark evaluation
-python scripts/run_mteb_legalbench_eval.py --dataset mteb/legalbench_consumer_contracts_qa --split test --model bge-m3
+python pipeline.py mteb-eval --dataset mteb/legalbench_consumer_contracts_qa --split test --model bge-m3
 
 # 4. Run whitepaper recommendations (retrieve + classify)
 python pipeline.py whitepaper -o outputs/whitepaper_classified.csv
@@ -631,14 +593,16 @@ cd notebooks
 jupyter notebook
 ```
 
-Execute in order:
+Run evaluation in Python first:
 
-1. `01_retrieval_analysis.ipynb` — Retrieval strategy comparison (document +
-   paragraph level, bootstrap CIs, statistical significance, error analysis)
-2. `02_rag_evaluation.ipynb` — Classification + LLM-as-judge
-3. `03_evaluation_metrics.ipynb` — Consolidated evaluation breakdown
-4. `04_whitepaper_evaluation.ipynb` — Whitepaper recommendations (retrieval +
-   classification, export for human evaluation)
+```bash
+python pipeline.py unified-eval --models bge-m3 mpnet minilm
+```
+
+Then open the visualization notebook:
+
+1. `05_eval_visualizations_only.ipynb` — Gold doc-level and MTEB chunk-level
+   comparison plots plus whitepaper retrieval inspection.
 
 ### 10.5 Random Seeds
 
@@ -693,10 +657,7 @@ All stochastic operations use fixed random seeds for reproducibility:
 
 | Notebook | Purpose |
 |----------|---------|
-| `01_retrieval_analysis.ipynb` | BM25 vs FAISS vs Hybrid ± Reranker (doc + para level, CIs, significance, error analysis) |
-| `02_rag_evaluation.ipynb` | Classification + LLM-as-judge |
-| `03_evaluation_metrics.ipynb` | Consolidated evaluation breakdown |
-| `04_whitepaper_evaluation.ipynb` | Whitepaper recommendations → retrieval + classification → human evaluation CSV |
+| `05_eval_visualizations_only.ipynb` | Visualizations from unified script outputs (`outputs/eval_unified/`) |
 
 ---
 
@@ -730,3 +691,6 @@ All stochastic operations use fixed random seeds for reproducibility:
 
 8. Jiang, A. Q., et al. (2023).
    *Mistral 7B.* arXiv:2310.06825.
+
+
+
