@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
@@ -23,6 +22,8 @@ from config import (
     JUDGE_MODEL,
     LLM_MODEL,
     RERANKER_MODEL,
+    SPLADE_MAX_LENGTH,
+    SPLADE_MODEL,
     normalise_doc_name,
 )
 from data_models import Chunk
@@ -47,6 +48,7 @@ from retrieval.dense_retriever import DenseRetriever
 from retrieval.hybrid_retriever import HybridRetriever as CompositeHybridRetriever
 from retrieval.reranker import RerankedRetriever, Reranker
 from retrieval.retrieval import HybridRetriever
+from retrieval.splade_retriever import SPLADERetriever
 
 
 def _safe_retrieve(retriever: Any, query: str, top_k: int):
@@ -102,11 +104,23 @@ def _load_mteb_queries_qrels(
     queries_ds = _load_split(dataset_id, "queries", "queries")
     qrels_ds = _load_split(dataset_id, "qrels", split_name)
 
-    queries = {
-        str(row.get("_id")): str(row.get("text", ""))
-        for row in queries_ds
-        if str(row.get("_id", "")).strip() and str(row.get("text", "")).strip()
-    }
+    queries: dict[str, str] = {}
+    duplicate_query_ids: set[str] = set()
+    for row in queries_ds:
+        qid = str(row.get("_id", "")).strip()
+        text = str(row.get("text", "")).strip()
+        if not qid or not text:
+            continue
+        if qid in queries:
+            duplicate_query_ids.add(qid)
+        queries[qid] = text
+
+    if duplicate_query_ids:
+        dup_preview = ", ".join(sorted(duplicate_query_ids)[:10])
+        raise RuntimeError(
+            "Duplicate query IDs detected in MTEB query split; cannot guarantee paired evaluation. "
+            f"Examples: {dup_preview}"
+        )
 
     relevant_by_query: dict[str, set[str]] = {}
     for row in qrels_ds:
@@ -118,6 +132,101 @@ def _load_mteb_queries_qrels(
         relevant_by_query.setdefault(qid, set()).add(did)
 
     return queries, relevant_by_query
+
+
+def _holm_bonferroni(p_values: list[float]) -> list[float]:
+    m = len(p_values)
+    if m == 0:
+        return []
+    order = np.argsort(np.asarray(p_values, dtype=float))
+    sorted_p = [float(p_values[i]) for i in order]
+    adjusted_sorted: list[float] = [0.0] * m
+    prev = 0.0
+    for i, p in enumerate(sorted_p):
+        adj = min(1.0, (m - i) * p)
+        adj = max(adj, prev)
+        adjusted_sorted[i] = adj
+        prev = adj
+    adjusted: list[float] = [0.0] * m
+    for sorted_idx, original_idx in enumerate(order):
+        adjusted[int(original_idx)] = adjusted_sorted[sorted_idx]
+    return adjusted
+
+
+def _paired_effect_size_dz(scores_a: list[float], scores_b: list[float]) -> float:
+    a = np.asarray(scores_a, dtype=float)
+    b = np.asarray(scores_b, dtype=float)
+    diff = a - b
+    if len(diff) < 2:
+        return 0.0
+    sd = float(np.std(diff, ddof=1))
+    if sd == 0.0:
+        return 0.0
+    return float(np.mean(diff) / sd)
+
+
+def _effect_size_label(dz: float) -> str:
+    adz = abs(dz)
+    if adz < 0.2:
+        return "negligible"
+    if adz < 0.5:
+        return "small"
+    if adz < 0.8:
+        return "medium"
+    return "large"
+
+
+def _build_metrics_summary_tables(metrics_df: pd.DataFrame, k_for_summary: int = 10) -> tuple[pd.DataFrame, pd.DataFrame]:
+    summary_df = (
+        metrics_df[metrics_df["k"] == k_for_summary][
+            ["dataset", "level", "model_key", "method", "k", "hit_rate", "mrr", "ndcg", "num_queries"]
+        ]
+        .copy()
+        .sort_values(["dataset", "level", "method", "ndcg"], ascending=[True, True, True, False])
+        .reset_index(drop=True)
+    )
+
+    comp_rows: list[dict[str, Any]] = []
+    for (dataset, level, method), group in summary_df.groupby(["dataset", "level", "method"], dropna=False):
+        if len(group) < 2:
+            continue
+        for metric in ("ndcg", "mrr", "hit_rate"):
+            ranked = group.sort_values(metric, ascending=False).reset_index(drop=True)
+            best = ranked.iloc[0]
+            second = ranked.iloc[1]
+            comp_rows.append(
+                {
+                    "dataset": dataset,
+                    "level": level,
+                    "method": method,
+                    "metric": metric,
+                    "best_model": str(best["model_key"]),
+                    "best_value": float(best[metric]),
+                    "second_model": str(second["model_key"]),
+                    "second_value": float(second[metric]),
+                    "gap_to_second": float(best[metric] - second[metric]),
+                    "num_models_compared": int(len(ranked)),
+                }
+            )
+    comparison_df = pd.DataFrame(comp_rows)
+    return summary_df, comparison_df
+
+
+def _validate_ranking_consistency(metrics_df: pd.DataFrame, ranking_df: pd.DataFrame, k_for_ranking: int = 10) -> None:
+    expected = (
+        metrics_df[metrics_df["k"] == k_for_ranking]
+        .sort_values(["dataset", "level", "ndcg"], ascending=[True, True, False])
+        .reset_index(drop=True)
+    )
+    if expected.shape != ranking_df.shape:
+        raise RuntimeError(
+            "Ranking export shape mismatch with evaluated metrics table. "
+            f"expected={expected.shape}, actual={ranking_df.shape}"
+        )
+    expected_rows = expected.to_dict("records")
+    actual_rows = ranking_df.reset_index(drop=True).to_dict("records")
+    if expected_rows != actual_rows:
+        raise RuntimeError("Ranking export does not match evaluated and sorted k=10 metrics.")
 
 
 def _metrics_to_rows(
@@ -289,6 +398,22 @@ def _build_mteb_retriever(
             final_k=DEFAULT_RERANK_TOP,
         )
     return hybrid
+
+
+def _build_mteb_splade_retriever(
+    *,
+    dataset_id: str,
+    max_corpus: int | None,
+    model_name: str,
+    max_length: int,
+):
+    corpus_ds = _load_split(dataset_id, "corpus", "corpus")
+    chunks, _ = _build_mteb_chunks(corpus_ds, max_corpus)
+    return SPLADERetriever.from_chunks(
+        chunks,
+        model_name=model_name,
+        max_length=max_length,
+    )
 
 
 def _export_gold_retrieved_chunks(
@@ -465,101 +590,6 @@ def cmd_download_models(args: argparse.Namespace) -> None:
     print("[download] Completed.")
 
 
-def cmd_mteb_eval(args: argparse.Namespace) -> None:
-    """Run MTEB LegalBench retrieval evaluation and export CSV/JSON."""
-    from rank_bm25 import BM25Okapi
-
-    print(f"[mteb] Loading corpus from {args.dataset}...")
-    corpus_ds = _load_split(args.dataset, "corpus", "corpus")
-    chunks, texts = _build_mteb_chunks(corpus_ds, args.max_corpus)
-    if not chunks:
-        raise RuntimeError("No corpus rows loaded from dataset.")
-
-    allowed_doc_ids = {c.id for c in chunks}
-    bm25 = BM25Okapi([tokenize(t) for t in texts])
-    embed_model = get_embed_model(args.model)
-    embeddings = embed_texts(texts, embed_model)
-    faiss_index = build_faiss_index(embeddings)
-
-    retriever = HybridRetriever(
-        faiss_index=faiss_index,
-        bm25=bm25,
-        chunks=chunks,
-        embed_model=embed_model,
-        use_reranker=not args.no_rerank,
-    )
-
-    queries, relevant_by_query = _load_mteb_queries_qrels(args.dataset, args.split)
-    filtered_qrels = {
-        qid: {did for did in rels if did in allowed_doc_ids}
-        for qid, rels in relevant_by_query.items()
-    }
-    filtered_qrels = {qid: rels for qid, rels in filtered_qrels.items() if rels and qid in queries}
-    ordered_qids = sorted(filtered_qrels.keys())
-    if not ordered_qids:
-        raise RuntimeError("No valid qrels after filtering. Try running without --max-corpus.")
-
-    max_k = max(args.k_values)
-    n_retrieve = max(max_k * 3, args.top_k, 30)
-    n_rerank = max(max_k, args.rerank_top)
-
-    all_retrieved: list[list[str]] = []
-    all_relevant: list[set[str]] = []
-
-    print(f"[mteb] Evaluating {len(ordered_qids)} queries...")
-    for idx, qid in enumerate(ordered_qids, start=1):
-        query = queries[qid]
-        result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
-        ranked_ids = [c.id for c in result.ranked_chunks]
-        all_retrieved.append(ranked_ids)
-        all_relevant.append(filtered_qrels[qid])
-        if idx % 100 == 0:
-            print(f"  [{idx}/{len(ordered_qids)}] queries processed")
-
-    metrics_by_k = {
-        k: compute_retrieval_metrics(all_retrieved, all_relevant, k)
-        for k in sorted(set(args.k_values))
-    }
-    rows = []
-    run_name = f"mteb_legalbench_{args.model}_{'no_rerank' if args.no_rerank else 'rerank'}"
-    for k, metrics in sorted(metrics_by_k.items()):
-        rows.append(
-            {
-                "run_name": run_name,
-                "k": k,
-                "hit_rate": metrics.hit_rate,
-                "recall": metrics.recall,
-                "precision": metrics.precision,
-                "mrr": metrics.mrr,
-                "map": metrics.map_score,
-                "ndcg": metrics.ndcg,
-                "num_queries": metrics.num_queries,
-                "mean_rank": metrics.mean_rank,
-            }
-        )
-    df = pd.DataFrame(rows)
-
-    args.csv_out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(args.csv_out, index=False)
-    payload = {
-        "run_name": run_name,
-        "dataset": args.dataset,
-        "split": args.split,
-        "model": args.model,
-        "use_reranker": not args.no_rerank,
-        "num_corpus_docs": len(chunks),
-        "num_queries": len(ordered_qids),
-        "k_values": sorted(set(args.k_values)),
-        "metrics": {str(k): asdict(v) for k, v in sorted(metrics_by_k.items())},
-    }
-    args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.json_out, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-
-    print(f"[mteb] CSV saved -> {args.csv_out}")
-    print(f"[mteb] JSON saved -> {args.json_out}")
-
-
 def cmd_unified_eval(args: argparse.Namespace) -> None:
     """Run unified evaluation across gold, MTEB, and whitepaper exports."""
     if args.full_mteb:
@@ -585,6 +615,9 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         "skip_whitepaper": bool(args.skip_whitepaper),
         "force_cpu": bool(args.force_cpu),
         "auto_build_indices": bool(args.auto_build_indices),
+        "include_splade": bool(getattr(args, "include_splade", False)),
+        "splade_model": str(getattr(args, "splade_model", SPLADE_MODEL)),
+        "splade_max_length": int(getattr(args, "splade_max_length", SPLADE_MAX_LENGTH)),
         "outputs": {},
     }
 
@@ -681,6 +714,108 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 )
             )
 
+    if getattr(args, "include_splade", False):
+        print("\n=== SPLADE baseline ===")
+        base_model_for_chunks = args.models[0] if args.models else next(iter(EMBEDDING_MODELS))
+        if not _indices_exist(base_model_for_chunks):
+            if not args.auto_build_indices:
+                raise FileNotFoundError(
+                    "SPLADE needs chunk artifacts from at least one built index. "
+                    f"Missing indices for '{base_model_for_chunks}'. "
+                    "Build once with --auto-build-indices or main.py build."
+                )
+            print(f"[build] Missing indices for {base_model_for_chunks}; building now for SPLADE chunks...")
+            build_index(args.evidence_csv, base_model_for_chunks)
+
+        splade_base = SPLADERetriever.from_disk(
+            model_key=base_model_for_chunks,
+            model_name=args.splade_model,
+            max_length=args.splade_max_length,
+        )
+        splade_retrievers: dict[str, Any] = {"splade": splade_base}
+        if reranker is not None:
+            splade_retrievers["splade_rerank"] = RerankedRetriever(
+                splade_base,
+                reranker,
+                initial_k=max(args.top_k * 2, 30),
+                final_k=args.rerank_top,
+            )
+
+        for method_name, retriever in splade_retrievers.items():
+            print(f"[gold-doc] Evaluating {method_name} ...")
+            metrics_by_k = evaluate_retrieval(
+                retriever,
+                gold_path=args.gold_csv,
+                k_values=sorted(set(args.k_values)),
+                top_k_retrieve=max(args.top_k * 3, 30),
+                rerank_top=args.rerank_top,
+            )
+            metrics_rows.extend(
+                _metrics_to_rows(
+                    metrics_by_k,
+                    dataset="gold_standard",
+                    level="document",
+                    model_key="splade",
+                    method=method_name,
+                )
+            )
+
+        export_method = "splade_rerank" if "splade_rerank" in splade_retrievers else "splade"
+        _export_gold_retrieved_chunks(
+            retriever=splade_retrievers[export_method],
+            model_key="splade",
+            method=export_method,
+            gold_csv=args.gold_csv,
+            out_csv=args.output_dir / f"gold_retrieved_chunks_splade_{export_method}.csv",
+            top_k=args.export_k,
+        )
+
+        if not args.skip_whitepaper:
+            _export_whitepaper_retrieved_chunks(
+                retriever=splade_retrievers[export_method],
+                model_key="splade",
+                method=export_method,
+                whitepaper_csv=args.whitepaper_csv,
+                out_csv=args.output_dir / f"whitepaper_retrieved_chunks_splade_{export_method}.csv",
+                top_k=args.export_k,
+            )
+
+        if not args.skip_mteb:
+            mteb_method = "splade_rerank" if reranker is not None else "splade"
+            mteb_retriever = _build_mteb_splade_retriever(
+                dataset_id=args.mteb_dataset,
+                max_corpus=args.max_corpus,
+                model_name=args.splade_model,
+                max_length=args.splade_max_length,
+            )
+            if reranker is not None:
+                mteb_retriever = RerankedRetriever(
+                    mteb_retriever,
+                    reranker,
+                    initial_k=max(args.top_k * 2, 30),
+                    final_k=args.rerank_top,
+                )
+            mteb_metrics = _evaluate_mteb_chunk_level(
+                retriever=mteb_retriever,
+                dataset_id=args.mteb_dataset,
+                split_name=args.mteb_split,
+                k_values=sorted(set(args.k_values)),
+                top_k=max(args.top_k * 3, 30),
+                max_corpus=args.max_corpus,
+                model_key="splade",
+                method=mteb_method,
+                out_retrieved_csv=args.output_dir / f"mteb_retrieved_chunks_splade_{mteb_method}.csv",
+            )
+            metrics_rows.extend(
+                _metrics_to_rows(
+                    mteb_metrics,
+                    dataset="mteb_legalbench",
+                    level="chunk",
+                    model_key="splade",
+                    method=mteb_method,
+                )
+            )
+
     metrics_df = pd.DataFrame(metrics_rows)
     metrics_csv = args.output_dir / "metrics_all.csv"
     metrics_df.to_csv(metrics_csv, index=False)
@@ -690,11 +825,49 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         .sort_values(["dataset", "level", "ndcg"], ascending=[True, True, False])
         .reset_index(drop=True)
     )
+    _validate_ranking_consistency(metrics_df, ranking_df, k_for_ranking=10)
     ranking_csv = args.output_dir / "ranking_k10.csv"
     ranking_df.to_csv(ranking_csv, index=False)
 
+    summary_k10_df, comparison_k10_df = _build_metrics_summary_tables(metrics_df, k_for_summary=10)
+    summary_k10_csv = args.output_dir / "metrics_summary_k10.csv"
+    comparison_k10_csv = args.output_dir / "comparison_k10.csv"
+    summary_k10_df.to_csv(summary_k10_csv, index=False)
+    comparison_k10_df.to_csv(comparison_k10_csv, index=False)
+
+    interpretation_lines: list[str] = [
+        "Unified Evaluation Interpretation (k=10)",
+        "",
+        f"Total result rows: {len(summary_k10_df)}",
+        "Top systems by dataset/level (NDCG@10):",
+    ]
+    top_by_group = (
+        summary_k10_df.sort_values("ndcg", ascending=False)
+        .groupby(["dataset", "level"], as_index=False)
+        .first()
+    )
+    for _, row in top_by_group.iterrows():
+        interpretation_lines.append(
+            f"- {row['dataset']} | {row['level']}: {row['model_key']} + {row['method']} "
+            f"(NDCG@10={row['ndcg']:.4f}, MRR@10={row['mrr']:.4f}, Hit@10={row['hit_rate']:.4f})"
+        )
+    if not comparison_k10_df.empty:
+        interpretation_lines.append("")
+        interpretation_lines.append("Largest model gaps by method:")
+        biggest = comparison_k10_df.sort_values("gap_to_second", ascending=False).head(6)
+        for _, row in biggest.iterrows():
+            interpretation_lines.append(
+                f"- {row['dataset']} | {row['level']} | {row['method']} | {row['metric']}: "
+                f"{row['best_model']} over {row['second_model']} by {row['gap_to_second']:.4f}"
+            )
+    interpretation_csv = args.output_dir / "interpretation_k10.txt"
+    interpretation_csv.write_text("\n".join(interpretation_lines) + "\n", encoding="utf-8")
+
     summary["outputs"]["metrics_all"] = str(metrics_csv)
     summary["outputs"]["ranking_k10"] = str(ranking_csv)
+    summary["outputs"]["metrics_summary_k10"] = str(summary_k10_csv)
+    summary["outputs"]["comparison_k10"] = str(comparison_k10_csv)
+    summary["outputs"]["interpretation_k10"] = str(interpretation_csv)
     summary_json = args.output_dir / "run_summary.json"
     with open(summary_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
@@ -723,6 +896,8 @@ def cmd_robustness(args: argparse.Namespace) -> None:
         reranker=None if args.skip_reranker else Reranker(),
     )
 
+    gold_queries = sorted(group_gold_by_query(load_gold_standard(args.gold_csv)).keys())
+
     per_query_long_rows: list[dict[str, Any]] = []
     ci_rows: list[dict[str, Any]] = []
 
@@ -737,12 +912,18 @@ def cmd_robustness(args: argparse.Namespace) -> None:
         )
 
         n = len(scores["hit"])
+        if n != len(gold_queries):
+            raise RuntimeError(
+                "Per-query score length mismatch with gold query set: "
+                f"scores={n}, gold_queries={len(gold_queries)}"
+            )
         for i in range(n):
             per_query_long_rows.append(
                 {
                     "model_key": args.model,
                     "method": method_name,
                     "query_index": i,
+                    "query": gold_queries[i],
                     "hit": float(scores["hit"][i]),
                     "recall": float(scores["recall"][i]),
                     "precision": float(scores["precision"][i]),
@@ -792,16 +973,23 @@ def cmd_robustness(args: argparse.Namespace) -> None:
     pair_rows: list[dict[str, Any]] = []
     methods = sorted(per_query_df["method"].unique().tolist())
     for a, b in combinations(methods, 2):
-        dfa = per_query_df[per_query_df["method"] == a].sort_values("query_index")
-        dfb = per_query_df[per_query_df["method"] == b].sort_values("query_index")
+        dfa = per_query_df[per_query_df["method"] == a].sort_values("query_index").reset_index(drop=True)
+        dfb = per_query_df[per_query_df["method"] == b].sort_values("query_index").reset_index(drop=True)
+        if not dfa["query_index"].equals(dfb["query_index"]):
+            raise RuntimeError(f"Query index mismatch for paired comparison: {a} vs {b}")
+        if not dfa["query"].equals(dfb["query"]):
+            raise RuntimeError(f"Query text mismatch for paired comparison: {a} vs {b}")
         for metric in ("mrr", "ndcg", "hit"):
+            scores_a = dfa[metric].astype(float).tolist()
+            scores_b = dfb[metric].astype(float).tolist()
             p_val = paired_permutation_test(
-                dfa[metric].astype(float).tolist(),
-                dfb[metric].astype(float).tolist(),
+                scores_a,
+                scores_b,
                 n_permutations=10_000,
                 rng_seed=42,
             )
             delta = float(dfa[metric].mean() - dfb[metric].mean())
+            effect_dz = _paired_effect_size_dz(scores_a, scores_b)
             pair_rows.append(
                 {
                     "model_key": args.model,
@@ -811,12 +999,28 @@ def cmd_robustness(args: argparse.Namespace) -> None:
                     "method_b": b,
                     "delta_mean": delta,
                     "p_value": p_val,
+                    "effect_size_dz": effect_dz,
+                    "effect_label": _effect_size_label(effect_dz),
                 }
             )
 
     pvals_df = pd.DataFrame(pair_rows)
+    if not pvals_df.empty:
+        pvals_df["p_value_holm"] = np.nan
+        pvals_df["significant_holm_0_05"] = False
+        for metric, group in pvals_df.groupby("metric", sort=False):
+            adjusted = _holm_bonferroni(group["p_value"].astype(float).tolist())
+            pvals_df.loc[group.index, "p_value_holm"] = adjusted
+            pvals_df.loc[group.index, "significant_holm_0_05"] = [float(x) < 0.05 for x in adjusted]
     pvals_csv = args.output_dir / f"pairwise_permutation_k{args.k}_{args.model}.csv"
     pvals_df.to_csv(pvals_csv, index=False)
+
+    comparison_report_csv = args.output_dir / f"comparison_report_k{args.k}_{args.model}.csv"
+    comparison_report_df = (
+        pvals_df.sort_values(["metric", "p_value_holm", "p_value", "delta_mean"], ascending=[True, True, True, False])
+        .reset_index(drop=True)
+    )
+    comparison_report_df.to_csv(comparison_report_csv, index=False)
 
     mean_by_method_metric = (
         per_query_df.groupby("method")[["hit", "mrr", "ndcg", "rank"]].mean().to_dict("index")
@@ -872,6 +1076,31 @@ def cmd_robustness(args: argparse.Namespace) -> None:
         negative_csv, index=False
     )
 
+    interpretation_txt = args.output_dir / f"robustness_interpretation_k{args.k}_{args.model}.txt"
+    interp_lines = [
+        f"Robustness interpretation for model={args.model}, k={args.k}",
+        "",
+        "Method means (hit, mrr, ndcg, rank):",
+    ]
+    means_table = per_query_df.groupby("method")[["hit", "mrr", "ndcg", "rank"]].mean().sort_values("ndcg", ascending=False)
+    for method_name, row in means_table.iterrows():
+        interp_lines.append(
+            f"- {method_name}: hit={row['hit']:.4f}, mrr={row['mrr']:.4f}, ndcg={row['ndcg']:.4f}, rank={row['rank']:.2f}"
+        )
+    if not comparison_report_df.empty:
+        interp_lines.append("")
+        interp_lines.append("Paired differences significant after Holm correction (alpha=0.05):")
+        sig_df = comparison_report_df[comparison_report_df["significant_holm_0_05"]]
+        if sig_df.empty:
+            interp_lines.append("- None")
+        else:
+            for _, row in sig_df.iterrows():
+                interp_lines.append(
+                    f"- {row['metric']}: {row['method_a']} vs {row['method_b']} "
+                    f"(delta={row['delta_mean']:.4f}, p_holm={row['p_value_holm']:.4g}, effect={row['effect_label']}, dz={row['effect_size_dz']:.3f})"
+                )
+    interpretation_txt.write_text("\n".join(interp_lines) + "\n", encoding="utf-8")
+
     summary = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
@@ -881,10 +1110,12 @@ def cmd_robustness(args: argparse.Namespace) -> None:
             "per_query_scores": str(per_query_csv),
             "ci_table": str(ci_csv),
             "pairwise_permutation": str(pvals_csv),
+            "comparison_report": str(comparison_report_csv),
             "ablation_deltas": str(ablation_csv),
             "error_queries": str(errors_csv),
             "error_summary": str(errors_counts_csv),
             "negative_cases": str(negative_csv),
+            "interpretation": str(interpretation_txt),
         },
     }
     with open(args.output_dir / f"robustness_summary_k{args.k}_{args.model}.json", "w", encoding="utf-8") as f:
