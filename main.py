@@ -3,14 +3,13 @@
 Entry point for the RAG policy-alignment pipeline.
 
 Delegates to :pymod:`pipeline` which exposes the full CLI
-(``build``, ``evaluate``, ``classify``, ``run``).
+(``build``, ``prompt``, ``evaluate``, ``download-models``).
 
 Usage::
 
     python main.py build -i outputs/evidence.csv -m bge-m3
-    python main.py evaluate --gold gold_standard_doc_level/gold_standard.csv
-    python main.py classify -i outputs/recommendations.csv -o outputs/classified.csv
-    python main.py run -i outputs/recommendations.csv --gold gold_standard_doc_level/gold_standard.csv
+    python main.py prompt -i data/recommendations_whitepaper/recommendations_empty.csv --judge
+    python main.py evaluate --models bge-m3 mpnet minilm e5-large-v2 --include-splade --with-robustness
 """
 
 from pipeline import main
