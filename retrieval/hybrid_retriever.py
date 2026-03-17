@@ -79,7 +79,9 @@ class HybridRetriever(BaseRetriever):
         bm25_idx = np.argsort(bm25_scores)[::-1][: top_k * 2]
 
         # Dense FAISS search (2x candidates for fusion)
-        q_emb = embed_texts([query], self.embed_model, show_progress=False)
+        q_emb = embed_texts(
+            [query], self.embed_model, show_progress=False, is_query=True,
+        )
         _, dense_idx = self.faiss_index.search(
             q_emb.astype(np.float32), top_k * 2,
         )

@@ -249,7 +249,9 @@ class HybridRetriever:
         """
         # 1 & 2 — Sparse + Dense
         _, bm25_idx = search_bm25(self.bm25, query, k=top_k * 2)
-        q_emb = embed_texts([query], self.embed_model, show_progress=False)
+        q_emb = embed_texts(
+            [query], self.embed_model, show_progress=False, is_query=True,
+        )
         _, dense_idx = search_faiss(self.faiss_index, q_emb, k=top_k * 2)
 
         # 3 — RRF fusion
