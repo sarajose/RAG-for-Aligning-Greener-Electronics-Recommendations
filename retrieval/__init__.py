@@ -13,12 +13,14 @@ from retrieval.bm25_retriever import BM25Retriever
 from retrieval.dense_retriever import DenseRetriever
 from retrieval.hybrid_retriever import HybridRetriever
 from retrieval.reranker import Reranker, RerankedRetriever
+from retrieval.splade_retriever import SPLADERetriever
 
 __all__ = [
     "BaseRetriever",
     "BM25Retriever",
     "DenseRetriever",
     "HybridRetriever",
+    "SPLADERetriever",
     "Reranker",
     "RerankedRetriever",
 ]
