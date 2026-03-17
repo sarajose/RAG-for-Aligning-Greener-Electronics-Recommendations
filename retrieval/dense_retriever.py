@@ -40,7 +40,9 @@ class DenseRetriever(BaseRetriever):
         return cls(fi, chunks, embed_model)
 
     def retrieve(self, query: str, top_k: int = DEFAULT_TOP_K) -> RetrievalResult:
-        q_emb = embed_texts([query], self.embed_model, show_progress=False)
+        q_emb = embed_texts(
+            [query], self.embed_model, show_progress=False, is_query=True,
+        )
         scores, indices = self.faiss_index.search(
             q_emb.astype(np.float32), top_k,
         )
