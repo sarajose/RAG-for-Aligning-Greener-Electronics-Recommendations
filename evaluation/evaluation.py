@@ -1,173 +1,102 @@
-"""
-Evaluation suite for the RAG policy-alignment pipeline.
+"""Core evaluation utilities for the simplified thesis pipeline.
 
-Responsibilities
-----------------
-1. **Document-level retrieval evaluation** against the manually-annotated
-   gold standard (``gold_standard_doc_level/gold_standard.csv``).
-2. **MTEB benchmark evaluation** for validating retrieval on out-of-domain
-    legal data.
-3. **Classification evaluation** against gold-standard alignment labels.
-4. **Report generation** — human-readable tables and JSON export.
-
-All heavy metric computation is delegated to :pymod:`metrics`.
-
-Usage (standalone)::
-
-    python evaluation.py --gold gold_standard_doc_level/gold_standard.csv \\
-                         --model bge-m3 --top-k 10
+This module intentionally keeps only the essential functionality needed by:
+- prompting/retrieval workflows
+- unified robust retrieval evaluation
+- notebook visualizations fed by unified-eval outputs
 """
 
 from __future__ import annotations
 
 import csv
-import json
 import logging
-import numpy as np
-from pathlib import Path
 from collections import defaultdict
-from dataclasses import asdict
-from retrieval.retrieval import HybridRetriever
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
-from config import (
-    ALIGNMENT_LABELS,
-    DEFAULT_MODEL_KEY,
-    DEFAULT_TOP_K,
-    DEFAULT_RERANK_TOP,
-    EVAL_K_VALUES,
-    GOLD_STANDARD_CSV,
-    OUTPUT_DIR,
-    normalise_doc_name,
-)
-from data_models import (
-    Chunk,
-    GoldStandardEntry,
-    ClassificationResult,
-    RetrievalMetrics,
-    ClassificationMetrics,
-)
+import numpy as np
+
+from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, EVAL_K_VALUES, GOLD_STANDARD_CSV
+from data_models import GoldStandardEntry, RetrievalMetrics
 from evaluation.metrics import (
+    average_precision,
     compute_retrieval_metrics,
-    compute_classification_metrics,
-    bootstrap_ci,
-    paired_permutation_test,
+    hit_at_k,
+    ndcg_at_k,
+    precision_at_k,
+    rank_of_first_relevant,
+    recall_at_k,
+    reciprocal_rank,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# 1. Gold-standard loading
+def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
+    for k in keys:
+        if k in row and row[k] is not None:
+            return str(row[k])
+    return default
 
-def load_gold_standard(
-    csv_path: Path = GOLD_STANDARD_CSV,
-) -> list[GoldStandardEntry]:
-    """Load the manually-annotated gold standard from CSV.
 
-    Parameters
-    ----------
-    csv_path : Path
-        CSV with at least ``recommendation_text`` and ``doc_short_name``.
-
-    Returns
-    -------
-    list[GoldStandardEntry]
-    """
+def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardEntry]:
+    """Load gold-standard entries from CSV with tolerant column handling."""
     entries: list[GoldStandardEntry] = []
     with open(csv_path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            entries.append(GoldStandardEntry(
-                paper=row.get("Paper", ""),
-                source_page=row.get("source_page", ""),
-                source_line=row.get("source_line", ""),
-                recommendation_text=row.get("recommendation_text", ""),
-                source_snippet_original=row.get("source_snippet_original", ""),
-                recommendation_or_statement=row.get(
-                    "recommendation_or_statement", ""
-                ),
-                doc_short_name=row.get("doc_short_name", ""),
-                doc_type=row.get("doc_type", ""),
-                doc_ref_num=row.get("doc_ref_num", ""),
-                doc_reference_raw_excerpt=row.get(
-                    "doc_reference_raw_excerpt", ""
-                ),
-                evidence_span=row.get("evidence_span", ""),
-                reference_basis=row.get("reference_basis", ""),
-                needs_review=row.get("needs_review", ""),
-                context_excerpt=row.get("context_excerpt", ""),
-                alignment_label=row.get("alignment_label") or None,
-            ))
-    logger.info(
-        "Loaded %d gold-standard entries from %s", len(entries), csv_path,
-    )
+            entries.append(
+                GoldStandardEntry(
+                    paper=_pick(row, "Paper"),
+                    source_page=_pick(row, "source_page"),
+                    source_line=_pick(row, "source_line"),
+                    recommendation_text=_pick(row, "recommendation_text", "recommendation"),
+                    source_snippet_original=_pick(row, "source_snippet_original"),
+                    recommendation_or_statement=_pick(row, "recommendation_or_statement"),
+                    doc_short_name=_pick(row, "doc_short_name", "legal_doc_reference", "document"),
+                    doc_type=_pick(row, "doc_type"),
+                    doc_ref_num=_pick(row, "doc_ref_num"),
+                    doc_reference_raw_excerpt=_pick(row, "doc_reference_raw_excerpt"),
+                    evidence_span=_pick(row, "evidence_span"),
+                    reference_basis=_pick(row, "reference_basis"),
+                    needs_review=_pick(row, "needs_review"),
+                    context_excerpt=_pick(row, "context_excerpt"),
+                    alignment_label=_pick(row, "alignment_label") or None,
+                )
+            )
+    logger.info("Loaded %d gold-standard rows from %s", len(entries), csv_path)
     return entries
 
 
-def group_gold_by_query(
-    entries: list[GoldStandardEntry],
-) -> dict[str, set[str]]:
-    """Group gold-standard entries into ``{query: {canonical_doc_names}}``.
+def group_gold_by_query(entries: list[GoldStandardEntry]) -> dict[str, set[str]]:
+    """Group gold labels into {query: {canonical document names}}."""
+    from config import normalise_doc_name
 
-    Multiple entries with the same ``recommendation_text`` are merged so
-    that a single query maps to the full set of relevant documents.
-
-    Parameters
-    ----------
-    entries : list[GoldStandardEntry]
-
-    Returns
-    -------
-    dict[str, set[str]]
-    """
     grouped: dict[str, set[str]] = defaultdict(set)
     for e in entries:
-        canon = normalise_doc_name(e.doc_short_name)
-        grouped[e.recommendation_text].add(canon)
+        query = (e.recommendation_text or "").strip()
+        if not query:
+            continue
+        grouped[query].add(normalise_doc_name(e.doc_short_name))
     return dict(grouped)
 
-# 2. Document-level retrieval evaluation (in-domain gold standard)
 
 def evaluate_retrieval(
-    retriever,  # HybridRetriever — imported lazily to avoid circular deps
+    retriever,
     gold_path: Path = GOLD_STANDARD_CSV,
     k_values: Optional[list[int]] = None,
     top_k_retrieve: int = DEFAULT_TOP_K,
     rerank_top: int = DEFAULT_RERANK_TOP,
 ) -> dict[int, RetrievalMetrics]:
-    """Run document-level retrieval evaluation against the gold standard.
+    """Evaluate document-level retrieval against the gold standard."""
+    from config import normalise_doc_name
 
-    For every unique recommendation in the gold standard the retriever
-    fetches chunks.  The *documents* represented in those chunks are
-    compared against the gold-standard relevant-document set.
-
-    Parameters
-    ----------
-    retriever : HybridRetriever
-        Fully initialised retriever (indices loaded).
-    gold_path : Path
-        Gold-standard CSV path.
-    k_values : list[int] | None
-        Cut-off depths to report (defaults to ``EVAL_K_VALUES``).
-    top_k_retrieve : int
-        Chunks to retrieve per query (before document-level dedup).
-    rerank_top : int
-        Chunks kept after cross-encoder reranking.
-
-    Returns
-    -------
-    dict[int, RetrievalMetrics]
-        ``{k: metrics}`` for each requested cut-off.
-    """
     if k_values is None:
         k_values = EVAL_K_VALUES
 
     entries = load_gold_standard(gold_path)
     query_to_docs = group_gold_by_query(entries)
-    queries = list(query_to_docs.keys())
-    print(f"[eval] {len(queries)} unique queries from gold standard")
+    queries = sorted(query_to_docs.keys())
 
-    # Ensure we retrieve enough chunks so that after document-level dedup
-    # we still have at least max(k_values) distinct documents.
     max_k = max(k_values)
     n_retrieve = max(max_k * 3, top_k_retrieve, 30)
     n_rerank = max(max_k, rerank_top)
@@ -175,12 +104,12 @@ def evaluate_retrieval(
     all_retrieved_docs: list[list[str]] = []
     all_relevant_docs: list[set[str]] = []
 
-    for i, query in enumerate(queries):
+    for query in queries:
         try:
             result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
         except TypeError:
             result = retriever.retrieve(query, top_k=n_rerank)
-        # Deduplicate to document-level ranking (preserve first-seen order)
+
         seen: set[str] = set()
         doc_ranking: list[str] = []
         for chunk in result.ranked_chunks:
@@ -192,149 +121,11 @@ def evaluate_retrieval(
         all_retrieved_docs.append(doc_ranking)
         all_relevant_docs.append(query_to_docs[query])
 
-        if (i + 1) % 50 == 0:
-            print(f"  [{i + 1}/{len(queries)}] queries processed")
+    return {
+        k: compute_retrieval_metrics(all_retrieved_docs, all_relevant_docs, k)
+        for k in sorted(set(k_values))
+    }
 
-    print(f"[eval] All {len(queries)} queries processed")
-
-    # Compute metrics at each cut-off
-    results: dict[int, RetrievalMetrics] = {}
-    for k in sorted(k_values):
-        results[k] = compute_retrieval_metrics(
-            all_retrieved_docs, all_relevant_docs, k,
-        )
-    return results
-
-
-# 2b. Paragraph-level (chunk-level) retrieval evaluation
-
-def evaluate_paragraph_retrieval(
-    retriever,
-    gold_path: Path = GOLD_STANDARD_CSV,
-    k_values: Optional[list[int]] = None,
-    top_k_retrieve: int = DEFAULT_TOP_K,
-    rerank_top: int = DEFAULT_RERANK_TOP,
-) -> dict[int, RetrievalMetrics]:
-    """Run **chunk-level** retrieval evaluation against the gold standard.
-
-    Unlike :func:`evaluate_retrieval` (document-level), this function does
-    **not** deduplicate chunks to documents.  A retrieved chunk is
-    considered *relevant* when its parent document matches one of the
-    gold-standard relevant documents for the query.  This measures whether
-    the retriever surfaces paragraphs from the correct legislation rather
-    than merely finding the right document somewhere in the ranked list.
-
-    Parameters
-    ----------
-    retriever
-        Fully initialised retriever.
-    gold_path : Path
-        Gold-standard CSV path.
-    k_values : list[int] | None
-        Cut-off depths (defaults to ``EVAL_K_VALUES``).
-    top_k_retrieve : int
-        Chunks to retrieve per query.
-    rerank_top : int
-        Chunks kept after reranking.
-
-    Returns
-    -------
-    dict[int, RetrievalMetrics]
-        ``{k: metrics}`` for each requested cut-off depth.
-    """
-    if k_values is None:
-        k_values = EVAL_K_VALUES
-
-    entries = load_gold_standard(gold_path)
-    query_to_docs = group_gold_by_query(entries)
-    queries = list(query_to_docs.keys())
-    print(f"[para-eval] {len(queries)} unique queries from gold standard")
-
-    max_k = max(k_values)
-    n_retrieve = max(max_k * 3, top_k_retrieve, 30)
-    n_rerank = max(max_k, rerank_top)
-
-    from evaluation.metrics import (
-        hit_at_k, recall_at_k, precision_at_k,
-        reciprocal_rank, average_precision, ndcg_at_k,
-        rank_of_first_relevant as _rank_first,
-    )
-
-    # We'll compute per-query scores manually because each chunk is
-    # either relevant (its document is in gold set) or not.
-    per_query_hits: dict[int, list[int]] = {k: [] for k in k_values}
-    per_query_recall: dict[int, list[float]] = {k: [] for k in k_values}
-    per_query_prec: dict[int, list[float]] = {k: [] for k in k_values}
-    per_query_mrr: dict[int, list[float]] = {k: [] for k in k_values}
-    per_query_ap: dict[int, list[float]] = {k: [] for k in k_values}
-    per_query_ndcg: dict[int, list[float]] = {k: [] for k in k_values}
-    per_query_rank: dict[int, list[float]] = {k: [] for k in k_values}
-
-    for i, query in enumerate(queries):
-        try:
-            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
-        except TypeError:
-            result = retriever.retrieve(query, top_k=n_rerank)
-        relevant_docs = query_to_docs[query]
-
-        # Build a binary relevance list at chunk level
-        chunk_ids = [c.id for c in result.ranked_chunks]
-        chunk_relevance = [
-            normalise_doc_name(c.document) in relevant_docs
-            for c in result.ranked_chunks
-        ]
-        # Create pseudo-IDs so that each "relevant" chunk gets a unique ID
-        relevant_ids = {
-            cid for cid, rel in zip(chunk_ids, chunk_relevance) if rel
-        }
-
-        for k in k_values:
-            per_query_hits[k].append(hit_at_k(chunk_ids[:k], relevant_ids))
-            per_query_prec[k].append(
-                precision_at_k(chunk_ids, relevant_ids, k)
-            )
-            per_query_mrr[k].append(
-                reciprocal_rank(chunk_ids[:k], relevant_ids)
-            )
-            per_query_ap[k].append(
-                average_precision(chunk_ids[:k], relevant_ids)
-            )
-            per_query_ndcg[k].append(
-                ndcg_at_k(chunk_ids, relevant_ids, k)
-            )
-            per_query_rank[k].append(
-                _rank_first(chunk_ids[:k], relevant_ids)
-            )
-            # Recall: fraction of relevant chunks found in top-k
-            # (capped at total relevant to avoid > 1 when many chunks match)
-            n_rel_found = sum(1 for cid in chunk_ids[:k] if cid in relevant_ids)
-            n_rel_total = max(len(relevant_ids), 1)
-            per_query_recall[k].append(min(n_rel_found / n_rel_total, 1.0))
-
-        if (i + 1) % 50 == 0:
-            print(f"  [{i + 1}/{len(queries)}] queries processed (paragraph)")
-
-    print(f"[para-eval] All {len(queries)} queries processed")
-
-    results: dict[int, RetrievalMetrics] = {}
-    for k in sorted(k_values):
-        found_ranks = [r for r in per_query_rank[k] if r != float("inf")]
-        mr = float(np.mean(found_ranks)) if found_ranks else float("inf")
-        results[k] = RetrievalMetrics(
-            k=k,
-            hit_rate=float(np.mean(per_query_hits[k])),
-            recall=float(np.mean(per_query_recall[k])),
-            precision=float(np.mean(per_query_prec[k])),
-            mrr=float(np.mean(per_query_mrr[k])),
-            map_score=float(np.mean(per_query_ap[k])),
-            ndcg=float(np.mean(per_query_ndcg[k])),
-            num_queries=len(queries),
-            mean_rank=mr,
-        )
-    return results
-
-
-# 2c. Per-query score arrays (for bootstrap CI / significance tests)
 
 def per_query_retrieval_scores(
     retriever,
@@ -344,38 +135,12 @@ def per_query_retrieval_scores(
     rerank_top: int = DEFAULT_RERANK_TOP,
     level: str = "document",
 ) -> dict[str, list[float]]:
-    """Return per-query metric arrays for bootstrap / significance analysis.
-
-    Parameters
-    ----------
-    retriever
-        Fully initialised retriever.
-    gold_path : Path
-        Gold-standard CSV path.
-    k : int
-        Cut-off depth for all metrics.
-    top_k_retrieve : int
-        Chunks to retrieve per query.
-    rerank_top : int
-        Chunks kept after reranking.
-    level : str
-        ``"document"`` for document-level, ``"paragraph"`` for chunk-level.
-
-    Returns
-    -------
-    dict[str, list[float]]
-        Keys: ``"hit"``, ``"recall"``, ``"precision"``, ``"mrr"``,
-        ``"ap"``, ``"ndcg"`` — each a list of per-query floats.
-    """
-    from evaluation.metrics import (
-        hit_at_k, recall_at_k, precision_at_k,
-        reciprocal_rank, average_precision, ndcg_at_k,
-        rank_of_first_relevant,
-    )
+    """Return per-query scores used for CI and significance tests."""
+    from config import normalise_doc_name
 
     entries = load_gold_standard(gold_path)
     query_to_docs = group_gold_by_query(entries)
-    queries = list(query_to_docs.keys())
+    queries = sorted(query_to_docs.keys())
 
     n_retrieve = max(k * 3, top_k_retrieve, 30)
     n_rerank = max(k, rerank_top)
@@ -389,22 +154,23 @@ def per_query_retrieval_scores(
             result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
         except TypeError:
             result = retriever.retrieve(query, top_k=n_rerank)
+
         relevant = query_to_docs[query]
 
         if level == "document":
             seen: set[str] = set()
-            ranking: list[str] = []
+            ids: list[str] = []
             for c in result.ranked_chunks:
                 canon = normalise_doc_name(c.document)
                 if canon not in seen:
                     seen.add(canon)
-                    ranking.append(canon)
-            ids = ranking
+                    ids.append(canon)
             rel_set = relevant
-        else:  # paragraph
+        else:
             ids = [c.id for c in result.ranked_chunks]
             rel_set = {
-                c.id for c in result.ranked_chunks
+                c.id
+                for c in result.ranked_chunks
                 if normalise_doc_name(c.document) in relevant
             }
 
@@ -419,401 +185,46 @@ def per_query_retrieval_scores(
     return out
 
 
-# 2d. Load whitepaper recommendations
-
-def load_whitepaper_recommendations(
-    csv_path: Optional[Path] = None,
-) -> list[dict[str, str]]:
-    """Load recommendations from the whitepaper CSV (semicolon-separated).
-
-    Parameters
-    ----------
-    csv_path : Path | None
-        Defaults to ``WHITEPAPER_RECOMMENDATIONS_CSV`` from config.
-
-    Returns
-    -------
-    list[dict[str, str]]
-        Each dict has keys ``section``, ``subsection``, ``title``,
-        ``recommendation``.
-    """
-    if csv_path is None:
-        from config import WHITEPAPER_RECOMMENDATIONS_CSV
-        csv_path = WHITEPAPER_RECOMMENDATIONS_CSV
-
+def load_whitepaper_recommendations(csv_path: Path) -> list[dict[str, str]]:
+    """Load whitepaper recommendations from a semicolon-delimited CSV."""
     rows: list[dict[str, str]] = []
     with open(csv_path, encoding="utf-8") as f:
         for row in csv.DictReader(f, delimiter=";"):
-            rows.append({
-                "section": row.get("section", "").strip(),
-                "subsection": row.get("subsection", "").strip(),
-                "title": row.get("title", "").strip(),
-                "recommendation": row.get("recommendation", "").strip(),
-            })
-    logger.info(
-        "Loaded %d whitepaper recommendation rows from %s",
-        len(rows), csv_path,
-    )
+            rows.append(
+                {
+                    "section": (row.get("section") or "").strip(),
+                    "subsection": (row.get("subsection") or "").strip(),
+                    "title": (row.get("title") or "").strip(),
+                    "recommendation": (row.get("recommendation") or "").strip(),
+                }
+            )
     return rows
 
-
-# 3. MTEB benchmark evaluation
-
-def load_benchmark(benchmark_path: Path) -> list[dict]:
-    """Load an MTEB retrieval benchmark from a JSON file.
-
-    Expected schema::
-
-        [
-          {
-            "query": "text …",
-            "relevant_ids": ["chunk_id_1", "chunk_id_2"]
-          },
-          …
-        ]
-
-    For document-level benchmarks, use ``"relevant_docs"`` instead and
-    pass ``id_field="relevant_docs"`` to :func:`evaluate_benchmark`.
-
-    Parameters
-    ----------
-    benchmark_path : Path
-        JSON file with benchmark queries and gold labels.
-
-    Returns
-    -------
-    list[dict]
-    """
-    with open(benchmark_path, encoding="utf-8") as f:
-        data = json.load(f)
-    logger.info(
-        "Loaded %d benchmark queries from %s", len(data), benchmark_path,
-    )
-    return data
-
-
-def evaluate_benchmark(
-    retriever,
-    benchmark_path: Path,
-    k_values: Optional[list[int]] = None,
-    top_k_retrieve: int = DEFAULT_TOP_K,
-    rerank_top: int = DEFAULT_RERANK_TOP,
-    id_field: str = "relevant_ids",
-) -> dict[int, RetrievalMetrics]:
-    """Run retrieval evaluation on an MTEB benchmark dataset.
-
-    Works with **chunk-level** (``relevant_ids``) or **document-level**
-    (``relevant_docs``) gold annotations depending on *id_field*.
-
-    Parameters
-    ----------
-    retriever : HybridRetriever
-    benchmark_path : Path
-    k_values : list[int] | None
-    top_k_retrieve : int
-    rerank_top : int
-    id_field : str
-        JSON key holding the relevant identifiers per query.
-
-    Returns
-    -------
-    dict[int, RetrievalMetrics]
-    """
-    if k_values is None:
-        k_values = EVAL_K_VALUES
-
-    cases = load_benchmark(benchmark_path)
-    print(f"[benchmark] {len(cases)} queries loaded")
-
-    max_k = max(k_values)
-    n_retrieve = max(max_k * 3, top_k_retrieve, 30)
-    n_rerank = max(max_k, rerank_top)
-
-    all_retrieved: list[list[str]] = []
-    all_relevant: list[set[str]] = []
-
-    for i, case in enumerate(cases):
-        query = case["query"]
-        relevant = set(case.get(id_field, []))
-
-        try:
-            result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
-        except TypeError:
-            result = retriever.retrieve(query, top_k=n_rerank)
-        retrieved_ids = [c.id for c in result.ranked_chunks]
-
-        all_retrieved.append(retrieved_ids)
-        all_relevant.append(relevant)
-
-        if (i + 1) % 50 == 0:
-            print(f"  [{i + 1}/{len(cases)}] benchmark queries processed")
-
-    results: dict[int, RetrievalMetrics] = {}
-    for k in sorted(k_values):
-        results[k] = compute_retrieval_metrics(all_retrieved, all_relevant, k)
-    return results
-
-
-# 4. Classification evaluation
-
-def evaluate_classification(
-    predictions: list[ClassificationResult],
-    gold_labels: list[str],
-    labels: Optional[list[str]] = None,
-) -> ClassificationMetrics:
-    """Evaluate LLM alignment classification against gold labels.
-
-    Parameters
-    ----------
-    predictions : list[ClassificationResult]
-        LLM outputs (same order as *gold_labels*).
-    gold_labels : list[str]
-        Ground-truth alignment labels.
-    labels : list[str] | None
-        Label vocabulary (defaults to ``ALIGNMENT_LABELS``).
-
-    Returns
-    -------
-    ClassificationMetrics
-    """
-    if labels is None:
-        labels = ALIGNMENT_LABELS
-    y_pred = [p.label for p in predictions]
-    return compute_classification_metrics(gold_labels, y_pred, labels)
-
-
-# 5. Report formatting
 
 def format_retrieval_report(
     metrics_by_k: dict[int, RetrievalMetrics],
     title: str = "Retrieval Evaluation",
 ) -> str:
-    """Format retrieval metrics into a human-readable table.
+    """Format retrieval metrics in a compact table."""
+    if not metrics_by_k:
+        return f"{title}: no metrics"
 
-    Primary metrics (★) are those most informative when each query has
-    exactly one relevant document: Hit@k, MRR, NDCG@k, and Mean Rank.
-
-    Parameters
-    ----------
-    metrics_by_k : dict[int, RetrievalMetrics]
-    title : str
-
-    Returns
-    -------
-    str
-        Multi-line report ready for ``print()``.
-    """
     m0 = next(iter(metrics_by_k.values()))
     lines = [
         "",
         "=" * 82,
         f"  {title}  (n = {m0.num_queries} queries)",
         "=" * 82,
-        f"{'k':>4} | {'★Hit@k':>7} | {'Recall':>7} | {'Prec':>7} "
-        f"| {'★MRR':>7} | {'MAP':>7} | {'★NDCG':>7} | {'★MR':>7}",
+        f"{'k':>4} | {'Hit@k':>7} | {'Recall':>7} | {'Prec':>7} | {'MRR':>7} | {'MAP':>7} | {'NDCG':>7} | {'MR':>7}",
         "-" * 82,
     ]
+
     for k, m in sorted(metrics_by_k.items()):
         mr_str = f"{m.mean_rank:>7.1f}" if m.mean_rank != float("inf") else "    inf"
         lines.append(
-            f"{k:>4} | {m.hit_rate:>7.3f} | {m.recall:>7.3f} | "
-            f"{m.precision:>7.3f} | {m.mrr:>7.3f} | "
-            f"{m.map_score:>7.3f} | {m.ndcg:>7.3f} | {mr_str}"
+            f"{k:>4} | {m.hit_rate:>7.3f} | {m.recall:>7.3f} | {m.precision:>7.3f} | "
+            f"{m.mrr:>7.3f} | {m.map_score:>7.3f} | {m.ndcg:>7.3f} | {mr_str}"
         )
+
     lines.append("=" * 82)
-    lines.append(
-        "  ★ = primary metrics (most informative when |relevant| = 1 per query)"
-    )
-    lines.append(
-        "  Note: When |relevant| = 1, Recall@k ≡ Hit@k and MAP ≡ MRR."
-    )
     return "\n".join(lines)
-
-
-def format_classification_report(
-    metrics: ClassificationMetrics,
-    title: str = "Classification Evaluation",
-) -> str:
-    """Format classification metrics into a human-readable report.
-
-    Parameters
-    ----------
-    metrics : ClassificationMetrics
-    title : str
-
-    Returns
-    -------
-    str
-        Multi-line report ready for ``print()``.
-    """
-    lines = [
-        "",
-        "=" * 72,
-        f"  {title}  (n = {metrics.num_samples} samples)",
-        "=" * 72,
-        f"  Accuracy:        {metrics.accuracy:.3f}",
-        f"  Macro-F1:        {metrics.macro_f1:.3f}",
-        f"  Weighted-F1:     {metrics.weighted_f1:.3f}",
-        f"  Cohen's Kappa:   {metrics.cohens_kappa:.3f}",
-        "",
-        f"  {'Label':<28} | {'Prec':>6} | {'Rec':>6} | {'F1':>6}",
-        f"  {'-' * 55}",
-    ]
-    for lbl in metrics.labels:
-        s = metrics.per_class.get(lbl, {})
-        lines.append(
-            f"  {lbl:<28} | {s.get('precision', 0):>6.3f} | "
-            f"{s.get('recall', 0):>6.3f} | {s.get('f1', 0):>6.3f}"
-        )
-    lines.append("")
-    lines.append("  Confusion matrix (rows = true, cols = predicted):")
-    lines.append(f"  Labels: {metrics.labels}")
-    for row in metrics.confusion_matrix:
-        lines.append(f"    {row}")
-    lines.append("=" * 72)
-    return "\n".join(lines)
-
-
-# 6. Persistence
-
-def save_metrics_json(
-    retrieval_metrics: Optional[dict[int, RetrievalMetrics]] = None,
-    classification_metrics: Optional[ClassificationMetrics] = None,
-    output_path: Optional[Path] = None,
-) -> None:
-    """Save all metrics to a JSON file for downstream analysis.
-
-    Parameters
-    ----------
-    retrieval_metrics : dict[int, RetrievalMetrics] | None
-    classification_metrics : ClassificationMetrics | None
-    output_path : Path | None
-        Destination JSON file (defaults to ``outputs/metrics.json``).
-    """
-    if output_path is None:
-        output_path = OUTPUT_DIR / "metrics.json"
-
-    payload: dict = {}
-    if retrieval_metrics:
-        payload["retrieval"] = {
-            str(k): asdict(m) for k, m in retrieval_metrics.items()
-        }
-    if classification_metrics:
-        payload["classification"] = asdict(classification_metrics)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    print(f"[eval] Metrics saved → {output_path}")
-
-
-def save_per_query_results(
-    queries: list[str],
-    all_retrieved_docs: list[list[str]],
-    all_relevant_docs: list[set[str]],
-    output_path: Path,
-) -> None:
-    """Write per-query retrieval breakdown for error analysis.
-
-    Parameters
-    ----------
-    queries : list[str]
-    all_retrieved_docs : list[list[str]]
-    all_relevant_docs : list[set[str]]
-    output_path : Path
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    rows: list[dict] = []
-    for query, retrieved, relevant in zip(
-        queries, all_retrieved_docs, all_relevant_docs,
-    ):
-        hit = bool(relevant & set(retrieved[:10]))
-        rows.append({
-            "query": query,
-            "relevant_docs": "; ".join(sorted(relevant)),
-            "retrieved_docs_top10": "; ".join(retrieved[:10]),
-            "hit_at_10": int(hit),
-            "recall_at_10": (
-                len(relevant & set(retrieved[:10])) / len(relevant)
-                if relevant else 0.0
-            ),
-        })
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"[eval] Per-query results saved → {output_path}")
-
-
-# 7. CLI
-
-def main() -> None:
-    """Run evaluation from the command line."""
-    import argparse
-    from retrieval.retrieval import HybridRetriever  # deferred to avoid circular import
-
-    parser = argparse.ArgumentParser(
-        description="Evaluate retrieval and classification quality",
-    )
-    parser.add_argument(
-        "--gold", type=Path, default=GOLD_STANDARD_CSV,
-        help="Gold-standard CSV path",
-    )
-    parser.add_argument(
-        "--benchmark", type=Path, default=None,
-        help="MTEB benchmark JSON path (optional)",
-    )
-    parser.add_argument(
-        "-m", "--model", default=DEFAULT_MODEL_KEY,
-        help="Embedding model key",
-    )
-    parser.add_argument(
-        "-k", "--top-k", type=int, default=DEFAULT_TOP_K,
-    )
-    parser.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
-    parser.add_argument("--no-rerank", action="store_true")
-    parser.add_argument(
-        "-o", "--output", type=Path, default=None,
-        help="JSON file for metric export",
-    )
-    parser.add_argument(
-        "--per-query", type=Path, default=None,
-        help="CSV path for per-query retrieval breakdown",
-    )
-    args = parser.parse_args()
-
-    retriever = HybridRetriever.from_disk(
-        args.model, use_reranker=not args.no_rerank,
-    )
-
-    # ── In-domain (gold standard) ──
-    ret_metrics = None
-    if args.gold and args.gold.exists():
-        print("\n>>> Document-level retrieval evaluation (gold standard)")
-        ret_metrics = evaluate_retrieval(
-            retriever,
-            args.gold,
-            top_k_retrieve=args.top_k,
-            rerank_top=args.rerank_top,
-        )
-        print(format_retrieval_report(ret_metrics, "Gold-Standard Retrieval"))
-
-    # ── MTEB benchmark ──
-    bench_metrics = None
-    if args.benchmark and args.benchmark.exists():
-        print("\n>>> MTEB benchmark evaluation")
-        bench_metrics = evaluate_benchmark(
-            retriever,
-            args.benchmark,
-            top_k_retrieve=args.top_k,
-            rerank_top=args.rerank_top,
-        )
-        print(format_retrieval_report(bench_metrics, "MTEB Benchmark"))
-
-    # ── Save ──
-    if args.output:
-        save_metrics_json(ret_metrics, None, args.output)
-
-
-if __name__ == "__main__":
-    main() 
