@@ -29,8 +29,8 @@ for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
 EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"  # C: drive
 EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"  # C: drive
 GOLD_STANDARD_CSV = GOLD_STANDARD_DIR / "gold_standard.csv"
-# WHITEPAPER_RECOMMENDATIONS_CSV = DATA_DIR / "recommendations_whitepaper" / "recommendations_empty.csv"
-WHITEPAPER_RECOMMENDATIONS_CSV = Path(r"C:/Users/sara-/Documents/Stockholm/University of Stockholm/Master Thesis/Repository/gold_standard/recommendations_empty.csv")
+WHITEPAPER_RECOMMENDATIONS_CSV = DATA_DIR / "recommendations_whitepaper" / "recommendations_v2.csv"
+# WHITEPAPER_RECOMMENDATIONS_CSV = Path(r"")
 
 # Embedding models
 
