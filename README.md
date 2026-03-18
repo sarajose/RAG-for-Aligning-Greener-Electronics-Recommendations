@@ -80,7 +80,7 @@ Common embedding model keys:
 - minilm
 - e5-large-v2
 
-Optional sparse baseline:
+Sparse baseline:
 - splade (enabled with --include-splade)
 
 Methods compared in evaluation include bm25, dense, rrf, and reranked variants.
@@ -96,13 +96,13 @@ Methods compared in evaluation include bm25, dense, rrf, and reranked variants.
 - notebooks/: analysis and plots.
 - outputs/: generated artifacts.
 
-## Evaluation (Short)
+## Evaluation
 
 Evaluation combines:
 1. Gold-standard document-level retrieval.
 2. MTEB LegalBench chunk-level retrieval.
-3. Optional whitepaper retrieval export (qualitative).
+3. Whitepaper retrieval.
 
 Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG, Mean Rank.
 
-With robustness enabled, the pipeline also reports bootstrap confidence intervals, paired permutation tests, and effect sizes for stronger statistical comparison.
+With robustness enabled, the pipeline also reports bootstrap confidence intervals, paired permutation tests.
