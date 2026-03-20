@@ -18,19 +18,29 @@ Usage::
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from config import ALIGNMENT_LABELS, LLM_TEMPERATURE, LLM_MAX_TOKENS
+from config import (
+    ALIGNMENT_LABELS,
+    LLM_CPU_MAX_MEMORY,
+    LLM_GPU_MAX_MEMORY,
+    LLM_MODEL,
+    LLM_MAX_TOKENS,
+    LLM_OFFLOAD_DIR,
+    LLM_QUANTIZE_4BIT,
+    LLM_TEMPERATURE,
+)
 from data_models import Chunk, ClassificationResult
 from rag.prompts import build_classifier_messages
 
 logger = logging.getLogger(__name__)
 
 # Default open-source model
-DEFAULT_CLASSIFIER_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+DEFAULT_CLASSIFIER_MODEL = LLM_MODEL
 
 
 def _parse_json_response(raw: str) -> dict:
@@ -78,10 +88,11 @@ class AlignmentClassifier:
     def __init__(
         self,
         model_name: str = DEFAULT_CLASSIFIER_MODEL,
-        quantize_4bit: bool = False,
+        quantize_4bit: bool = LLM_QUANTIZE_4BIT,
         device_map: str = "auto",
         max_new_tokens: int = LLM_MAX_TOKENS,
         temperature: float = LLM_TEMPERATURE,
+        offload_folder: Path = LLM_OFFLOAD_DIR / "classifier",
     ) -> None:
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
@@ -90,18 +101,35 @@ class AlignmentClassifier:
         logger.info("Loading classifier model: %s", model_name)
         print(f"[classifier] Loading {model_name} …")
 
+        offload_folder = Path(offload_folder)
+        offload_folder.mkdir(parents=True, exist_ok=True)
+
+        max_memory: dict = {"cpu": LLM_CPU_MAX_MEMORY}
+        if torch.cuda.is_available():
+            max_memory[0] = LLM_GPU_MAX_MEMORY
+
         load_kwargs: dict = {
             "device_map": device_map,
-            "torch_dtype": "auto",
+            "dtype": torch.float16,
+            "low_cpu_mem_usage": True,
+            "offload_state_dict": True,
+            "offload_folder": str(offload_folder),
+            "offload_buffers": True,
+            "max_memory": max_memory,
         }
 
+        quantization_enabled = False
         if quantize_4bit:
             try:
                 from transformers import BitsAndBytesConfig
+
                 load_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
                 )
+                quantization_enabled = True
                 print("[classifier] 4-bit quantisation enabled")
             except ImportError:
                 logger.warning(
@@ -109,9 +137,21 @@ class AlignmentClassifier:
                 )
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, **load_kwargs,
-        )
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, **load_kwargs,
+            )
+        except Exception as exc:
+            if not quantization_enabled:
+                raise
+            logger.warning(
+                "4-bit model load failed (%s) — retrying without quantisation", exc,
+            )
+            print("[classifier] 4-bit load failed; retrying without quantisation …")
+            load_kwargs.pop("quantization_config", None)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, **load_kwargs,
+            )
         print("[classifier] Model loaded")
 
     def _generate(self, messages: list[dict[str, str]]) -> str:
@@ -129,6 +169,10 @@ class AlignmentClassifier:
             gen_kwargs["temperature"] = self.temperature
         else:
             gen_kwargs["do_sample"] = False
+            # Use canonical greedy defaults to avoid generation-config warnings.
+            gen_kwargs["temperature"] = 1.0
+            gen_kwargs["top_p"] = 1.0
+            gen_kwargs["top_k"] = 50
 
         with torch.no_grad():
             outputs = self.model.generate(**inputs, **gen_kwargs)
