@@ -20,17 +20,25 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from config import (
+    JUDGE_MODEL,
+    JUDGE_QUANTIZE_4BIT,
+    LLM_CPU_MAX_MEMORY,
+    LLM_GPU_MAX_MEMORY,
+    LLM_OFFLOAD_DIR,
+)
 from data_models import Chunk, ClassificationResult
 from rag.prompts import build_judge_messages
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
 
 @dataclass
@@ -88,9 +96,10 @@ class LLMJudge:
     def __init__(
         self,
         model_name: str = DEFAULT_JUDGE_MODEL,
-        quantize_4bit: bool = False,
+        quantize_4bit: bool = JUDGE_QUANTIZE_4BIT,
         device_map: str = "auto",
         max_new_tokens: int = 512,
+        offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
@@ -98,27 +107,56 @@ class LLMJudge:
         logger.info("Loading judge model: %s", model_name)
         print(f"[judge] Loading {model_name} …")
 
+        offload_folder = Path(offload_folder)
+        offload_folder.mkdir(parents=True, exist_ok=True)
+
+        max_memory: dict = {"cpu": LLM_CPU_MAX_MEMORY}
+        if torch.cuda.is_available():
+            max_memory[0] = LLM_GPU_MAX_MEMORY
+
         load_kwargs: dict = {
             "device_map": device_map,
-            "torch_dtype": "auto",
+            "dtype": torch.float16,
+            "low_cpu_mem_usage": True,
+            "offload_state_dict": True,
+            "offload_folder": str(offload_folder),
+            "offload_buffers": True,
+            "max_memory": max_memory,
         }
 
+        quantization_enabled = False
         if quantize_4bit:
             try:
                 from transformers import BitsAndBytesConfig
+
                 load_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
                 )
+                quantization_enabled = True
             except ImportError:
                 logger.warning(
                     "bitsandbytes not installed — loading without quantisation"
                 )
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, **load_kwargs,
-        )
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, **load_kwargs,
+            )
+        except Exception as exc:
+            if not quantization_enabled:
+                raise
+            logger.warning(
+                "4-bit judge load failed (%s) — retrying without quantisation", exc,
+            )
+            print("[judge] 4-bit load failed; retrying without quantisation …")
+            load_kwargs.pop("quantization_config", None)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, **load_kwargs,
+            )
         print("[judge] Model loaded")
 
     def _generate(self, messages: list[dict[str, str]]) -> str:
@@ -135,6 +173,9 @@ class LLMJudge:
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
                 do_sample=False,
+                temperature=1.0,
+                top_p=1.0,
+                top_k=50,
             )
 
         new_tokens = outputs[0][inputs["input_ids"].shape[-1]:]
