@@ -6,6 +6,7 @@ hyper-parameters.  Every other module imports from here so that
 nothing is hard-coded elsewhere.
 """
 
+import os
 from pathlib import Path
 
 # Project paths
@@ -14,7 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
-OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
+OUTPUT_DIR = Path("D:/outputs")  # Use D: drive for outputs (C: version below is commented)
+# OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
 INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
@@ -23,6 +25,14 @@ DOCS_DIR = BASE_DIR / "docs"
 
 for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
+# Hugging Face cache/download settings (Windows-friendly)
+HF_CACHE_DIR = OUTPUT_DIR / "hf_cache"
+HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR / "hub"))
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # Default file paths
 
@@ -53,11 +63,17 @@ RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 # LLM (alignment classification) — open-source models
 
-LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"         # classifier
-JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # LLM-as-judge
+LLM_MODEL = "Qwen/Qwen2.5-3B-Instruct"         # classifier
+JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # independent LLM-as-judge
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 1024
-LLM_QUANTIZE_4BIT = False       # set True for ≤8 GB VRAM GPUs
+LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
+JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
+LLM_GPU_MAX_MEMORY = "8GiB"
+LLM_CPU_MAX_MEMORY = "24GiB"
+#LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"  # C: drive version
+LLM_OFFLOAD_DIR = Path("D:/outputs/offload")  # D: drive for offload
+LLM_OFFLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Alignment labels (to be denfined, just as a placeholder)
 
