@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from config import evidence_group_for_document
 from data_models import ClassificationResult, Recommendation
 
 
@@ -51,15 +52,18 @@ def save_retrieved_chunks_csv(
     rows: list[dict[str, Any]] = []
 
     for query, result in zip(queries, retrieval_results):
+        groups = list(getattr(result, "evidence_groups", []))
         for rank, (chunk, score) in enumerate(
             zip(result.ranked_chunks[:top_k], result.scores[:top_k]), start=1
         ):
+            group = groups[rank - 1] if rank - 1 < len(groups) else evidence_group_for_document(chunk.document)
             rows.append(
                 {
                     "query": query,
                     "rank": rank,
                     "chunk_id": chunk.id,
                     "document": chunk.document,
+                    "evidence_group": group,
                     "article": chunk.article,
                     "paragraph": chunk.paragraph,
                     "score": float(score),
@@ -112,15 +116,23 @@ def save_prompt_output_csv(
     for idx, rec in enumerate(recs):
         ret = retrieval_results[idx]
         cls = cls_results[idx] if idx < len(cls_results) else None
+        chunk_groups = list(getattr(ret, "evidence_groups", []))
+        if len(chunk_groups) < len(ret.ranked_chunks):
+            chunk_groups = [
+                evidence_group_for_document(c.document) for c in ret.ranked_chunks
+            ]
         rows.append(
             {
                 "section": rec.section,
                 "subsection": rec.subsection,
                 "title": rec.title,
                 "recommendation_query": rec.text,
+                "retrieval_mode": getattr(ret, "retrieval_mode", "flat_baseline"),
                 "retrieved_documents": "; ".join(sorted({c.document for c in ret.ranked_chunks})),
+                "retrieved_evidence_groups": "; ".join(sorted(set(chunk_groups))),
                 "retrieved_articles": "; ".join(sorted({c.article for c in ret.ranked_chunks if c.article})),
                 "top_chunk_ids": "; ".join(c.id for c in ret.ranked_chunks),
+                "top_chunk_groups": "; ".join(chunk_groups),
                 "top_chunk_texts": "\n---\n".join(
                     f"[{c.document} | {c.article}]\n{c.text[:400]}" for c in ret.ranked_chunks
                 ),
