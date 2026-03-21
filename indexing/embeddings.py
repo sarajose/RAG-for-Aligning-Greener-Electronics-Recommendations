@@ -98,6 +98,8 @@ def _truncate_overlong_texts(texts: list[str], model: SentenceTransformer) -> tu
     """
     tokenizer = model.tokenizer
     limit = get_model_max_tokens(model)
+    # Keep a small reserve for tokenizer/model-added special tokens.
+    safe_limit = max(16, limit - 8)
     out: list[str] = []
     truncated = 0
 
@@ -109,7 +111,7 @@ def _truncate_overlong_texts(texts: list[str], model: SentenceTransformer) -> tu
 
         truncated += 1
         clipped = tokenizer.decode(
-            token_ids[:limit],
+            token_ids[:safe_limit],
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True,
         )

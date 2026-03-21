@@ -37,6 +37,13 @@ from hashlib import sha256
 
 from bs4 import BeautifulSoup, Tag
 
+# Conservative text budget to avoid model-side hard truncation for 512-token
+# encoders while still preserving enough legal context per chunk.
+APPROX_CHARS_PER_TOKEN = 4
+MAX_CHUNK_TOKENS = 450
+MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN
+MIN_BLOCK_CHARS = 40
+
 # 1. LOADING & METADATA
 
 def load_html(path: Path) -> BeautifulSoup:
@@ -101,6 +108,51 @@ def clean(text: str) -> str:
 def tag_text(tag: Tag) -> str:
     """Recursively extract clean text from an HTML element."""
     return clean(tag.get_text())
+
+
+def split_text_for_embedding_budget(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Split long text into smaller chunks aligned to sentence boundaries."""
+    text = clean(text)
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if not sentences:
+        sentences = [text]
+
+    chunks: list[str] = []
+    current = ""
+
+    for sent in sentences:
+        if len(sent) > max_chars:
+            words = sent.split()
+            piece = ""
+            for word in words:
+                candidate = f"{piece} {word}".strip()
+                if len(candidate) <= max_chars:
+                    piece = candidate
+                else:
+                    if piece:
+                        chunks.append(piece)
+                    piece = word
+            if piece:
+                chunks.append(piece)
+            continue
+
+        candidate = f"{current} {sent}".strip()
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = sent
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 
 # 3. DOM NAVIGATION — hierarchy extraction
@@ -216,20 +268,111 @@ def extract_annexes(soup: BeautifulSoup, doc_name: str, source_file: str, versio
         if len(body) > _MAX_ANNEX_CHARS:
             body = body[:_MAX_ANNEX_CHARS] + " [...]"
 
-        chunk_id = generate_chunk_id(doc_name, title, "", body)
-        chunks.append({
-            "id": chunk_id,
-            "document": doc_name,
-            "source_file": source_file,
-            "version": version,
-            "chapter": "Annex",
-            "article": title,
-            "article_subtitle": "",
-            "paragraph": "",
-            "char_offset": 0,
-            "text": body,
-        })
+        body_parts = split_text_for_embedding_budget(body)
+        for i, part in enumerate(body_parts, start=1):
+            para = str(i) if len(body_parts) > 1 else ""
+            chunk_id = generate_chunk_id(doc_name, title, para, part)
+            chunks.append({
+                "id": chunk_id,
+                "document": doc_name,
+                "source_file": source_file,
+                "version": version,
+                "chapter": "Annex",
+                "article": title,
+                "article_subtitle": "",
+                "paragraph": para,
+                "char_offset": 0,
+                "text": part,
+            })
     return chunks
+
+
+def extract_generic_document_chunks(
+    soup: BeautifulSoup,
+    doc_name: str,
+    source_file: str,
+    version: str,
+) -> list[dict]:
+    """Fallback extraction for non-EUR-Lex structures (policy/strategy docs)."""
+    candidates = [
+        soup.find("div", id="docHtml"),
+        soup.find("main"),
+        soup.find("div", class_="content"),
+        soup.body,
+        soup,
+    ]
+
+    best_container = None
+    best_score = -1
+    for cand in candidates:
+        if cand is None:
+            continue
+        score = 0
+        for node in cand.find_all(["p", "li"], limit=5000):
+            txt = tag_text(node)
+            if len(txt) >= MIN_BLOCK_CHARS:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_container = cand
+
+    container = best_container or soup
+
+    # Exclude navigation/footer/meta elements that can flood with noise.
+    for noisy in container.select("nav, header, footer, aside, script, style"):
+        noisy.decompose()
+
+    rows: list[dict] = []
+    current_heading = ""
+    para_counter = 0
+
+    for node in container.find_all(["h1", "h2", "h3", "h4", "p", "li"]):
+        text = tag_text(node)
+        if not text:
+            continue
+
+        classes = " ".join(node.get("class", [])).lower()
+        if any(
+            token in classes
+            for token in (
+                "footnote",
+                "disclaimer",
+                "reference",
+                "logo",
+                "emission",
+                "modref",
+                "toc",
+                "arrow",
+            )
+        ):
+            continue
+
+        if node.name.startswith("h") or "heading" in classes:
+            if len(text) >= 4:
+                current_heading = text
+            continue
+
+        if len(text) < MIN_BLOCK_CHARS:
+            continue
+
+        for part in split_text_for_embedding_budget(text):
+            para_counter += 1
+            article = f"Section: {current_heading}" if current_heading else "General"
+            chunk_id = generate_chunk_id(doc_name, article, str(para_counter), part)
+            rows.append({
+                "id": chunk_id,
+                "document": doc_name,
+                "source_file": source_file,
+                "version": version,
+                "chapter": current_heading,
+                "article": article,
+                "article_subtitle": "",
+                "paragraph": str(para_counter),
+                "char_offset": 0,
+                "text": part,
+            })
+
+    return rows
 
 
 # 6. MAIN PARSE PIPELINE
@@ -263,39 +406,51 @@ def parse_eurlex_html(path: Path) -> list[dict]:
         if paras:
             for p in paras:
                 text = p["text"]
-                chunk_id = generate_chunk_id(doc_name, art_num, p["para_num"], text)
-                rows.append({
-                    "id": chunk_id,
-                    "document": doc_name,
-                    "source_file": source_file,
-                    "version": version,
-                    "chapter": chapter,
-                    "article": art_num,
-                    "article_subtitle": art_sub,
-                    "paragraph": p["para_num"],
-                    "char_offset": 0,  # placeholder - full DOM traversal needed for precise offset
-                    "text": text,
-                })
+                parts = split_text_for_embedding_budget(text)
+                for i, part in enumerate(parts, start=1):
+                    para = p["para_num"] or ""
+                    if len(parts) > 1:
+                        para = f"{para}.{i}" if para else str(i)
+                    chunk_id = generate_chunk_id(doc_name, art_num, para, part)
+                    rows.append({
+                        "id": chunk_id,
+                        "document": doc_name,
+                        "source_file": source_file,
+                        "version": version,
+                        "chapter": chapter,
+                        "article": art_num,
+                        "article_subtitle": art_sub,
+                        "paragraph": para,
+                        "char_offset": 0,  # placeholder - full DOM traversal needed for precise offset
+                        "text": part,
+                    })
         else:
             # Fallback: article has no parseable paragraphs
             full = tag_text(art)
             if full and len(full) > 20:
-                chunk_id = generate_chunk_id(doc_name, art_num, "", full)
-                rows.append({
-                    "id": chunk_id,
-                    "document": doc_name,
-                    "source_file": source_file,
-                    "version": version,
-                    "chapter": chapter,
-                    "article": art_num,
-                    "article_subtitle": art_sub,
-                    "paragraph": "",
-                    "char_offset": 0,
-                    "text": full,
-                })
+                parts = split_text_for_embedding_budget(full)
+                for i, part in enumerate(parts, start=1):
+                    para = str(i) if len(parts) > 1 else ""
+                    chunk_id = generate_chunk_id(doc_name, art_num, para, part)
+                    rows.append({
+                        "id": chunk_id,
+                        "document": doc_name,
+                        "source_file": source_file,
+                        "version": version,
+                        "chapter": chapter,
+                        "article": art_num,
+                        "article_subtitle": art_sub,
+                        "paragraph": para,
+                        "char_offset": 0,
+                        "text": part,
+                    })
 
     # Annexes
     rows.extend(extract_annexes(soup, doc_name, source_file, version))
+
+    # Generic fallback for policy/strategy docs lacking EUR-Lex article markers.
+    if not rows:
+        rows.extend(extract_generic_document_chunks(soup, doc_name, source_file, version))
 
     return rows
 
