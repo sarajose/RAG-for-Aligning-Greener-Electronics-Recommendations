@@ -91,7 +91,7 @@ def main() -> None:
     p_eval.add_argument(
         "--models",
         nargs="+",
-        default=[DEFAULT_MODEL_KEY, "mpnet", "minilm"],
+        default=[DEFAULT_MODEL_KEY, "e5-large-v2", "e5-mistral"],
         help="Embedding model keys for comparison",
     )
     p_eval.add_argument("--include-splade", action="store_true", help="Include SPLADE baseline")
@@ -123,7 +123,7 @@ def main() -> None:
     p_dl.add_argument(
         "--embedding-models",
         nargs="+",
-        default=["bge-m3", "mpnet", "minilm", "e5-large-v2"],
+        default=["bge-m3", "e5-large-v2", "e5-mistral"],
         help="Embedding model keys to pre-download",
     )
     p_dl.add_argument("--include-llms", action="store_true")

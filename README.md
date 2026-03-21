@@ -26,16 +26,50 @@ pip install -r requirements.txt
 ```powershell
 python retrieval/chunking_evidence.py -i data/evidence -o outputs/evidence.csv
 python main.py build -i outputs/evidence.csv -m bge-m3
-python main.py build -i outputs/evidence.csv -m mpnet
-python main.py build -i outputs/evidence.csv -m minilm
 python main.py build -i outputs/evidence.csv -m e5-large-v2
+python main.py build -i outputs/evidence.csv -m e5-mistral
 ```
+
+### Run prompt retrieval/classification
+
+Flat baseline (existing behavior):
+
+```powershell
+python main.py prompt `
+  --input data/recommendations_whitepaper/recommendations_v2.csv `
+  --output outputs/prompt_results.csv `
+  --model bge-m3 `
+  --top-k 10 `
+  --rerank-top 5 `
+  --judge `
+  --retrieval-mode flat_baseline
+```
+
+Split evidence retrieval (new behavior):
+
+```powershell
+python main.py prompt `
+  --input data/recommendations_whitepaper/recommendations_v2.csv `
+  --output outputs/prompt_results_2.csv `
+  --model bge-m3 `
+  --top-k 10 `
+  --rerank-top 5 `
+  --judge `
+  --retrieval-mode split_evidence_retrieval `
+  --max-chunks-per-doc 2 `
+  --near-dup-suppression
+```
+
+Notes:
+- The `prompt` retriever is already hybrid fusion (BM25 + dense + RRF) internally.
+- `--model` selects the embedding model key (`bge-m3`, `e5-large-v2`, `e5-mistral`, ...).
+- `fusion` is not a valid `--model` key; fusion is the retrieval method used by the retriever.
 
 ### Run unified evaluation
 
 ```powershell
 python main.py evaluate `
-  --models bge-m3 mpnet minilm e5-large-v2 `
+  --models bge-m3 e5-large-v2 e5-mistral `
   --include-splade `
   --k-values 1 3 5 10 20 `
   --top-k 20 `
@@ -76,14 +110,16 @@ Index artifacts are saved under outputs/indices/.
 
 Common embedding model keys:
 - bge-m3
-- mpnet
-- minilm
 - e5-large-v2
+- e5-mistral
 
 Sparse baseline:
 - splade (enabled with --include-splade)
 
 Methods compared in evaluation include bm25, dense, rrf, and reranked variants.
+
+See also:
+- docs/CLI_ARGUMENTS.md for full command arguments.
 
 ## File Structure
 

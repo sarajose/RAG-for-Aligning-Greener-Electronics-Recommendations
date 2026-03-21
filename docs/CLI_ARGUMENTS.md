@@ -79,7 +79,7 @@ Arguments:
 
 - `--models` (optional, one or more model keys)
   - Models to compare.
-  - Default: `bge-m3 mpnet minilm`
+  - Default: `bge-m3 e5-large-v2 e5-mistral`
 - `--include-splade` (flag)
   - Include SPLADE sparse baseline.
 - `--splade-model` (optional)
@@ -148,6 +148,6 @@ Arguments:
 
 - `--embedding-models` (optional, one or more keys)
   - Models to pre-download.
-  - Default: `bge-m3 mpnet minilm e5-large-v2`
+  - Default: `bge-m3 e5-large-v2 e5-mistral`
 - `--include-llms` (flag)
   - Also pre-download classifier/judge LLMs.

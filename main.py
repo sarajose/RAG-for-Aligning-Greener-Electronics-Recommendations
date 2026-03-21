@@ -9,7 +9,7 @@ Usage::
 
     python main.py build -i outputs/evidence.csv -m bge-m3
     python main.py prompt -i data/recommendations_whitepaper/recommendations_empty.csv --judge
-    python main.py evaluate --models bge-m3 mpnet minilm e5-large-v2 --include-splade --with-robustness
+    python main.py evaluate --models bge-m3 e5-large-v2 e5-mistral --include-splade --with-robustness
 """
 
 from pipeline import main
