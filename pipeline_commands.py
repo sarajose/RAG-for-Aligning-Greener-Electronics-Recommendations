@@ -63,12 +63,29 @@ def _print_progress(stage: str, idx: int, total: int) -> None:
         print(f"  [{stage}] {idx}/{total}")
 
 
-def _retrieve_all(retriever: Any, recs: list[Any], top_k: int, rerank_top: int) -> list[Any]:
+def _retrieve_all(
+    retriever: Any,
+    recs: list[Any],
+    top_k: int,
+    rerank_top: int,
+    retrieval_mode: str,
+    max_chunks_per_doc: int,
+    near_dup_suppression: bool,
+) -> list[Any]:
     """Run retrieval for all recommendations with consistent progress output."""
     results: list[Any] = []
     total = len(recs)
     for idx, rec in enumerate(recs, start=1):
-        results.append(retriever.retrieve(rec.text, top_k=top_k, rerank_top=rerank_top))
+        results.append(
+            retriever.retrieve(
+                rec.text,
+                top_k=top_k,
+                rerank_top=rerank_top,
+                retrieval_mode=retrieval_mode,
+                max_chunks_per_doc=max_chunks_per_doc,
+                near_dup_suppression=near_dup_suppression,
+            )
+        )
         _print_progress("retrieve", idx, total)
     return results
 
@@ -118,12 +135,21 @@ def cmd_prompt(args: argparse.Namespace) -> None:
 
     print(f"[prompt] Using indices from: {INDEX_DIR}")
     print(f"[prompt] Output file: {args.output}")
+    print(f"[prompt] Retrieval mode: {args.retrieval_mode}")
 
     recs = load_recommendations(args.input)
     print(f"[prompt] Loaded {len(recs)} recommendations")
 
     retriever = HybridRetriever.from_disk(args.model, use_reranker=not args.no_rerank)
-    retrieval_results = _retrieve_all(retriever, recs, top_k=args.top_k, rerank_top=args.rerank_top)
+    retrieval_results = _retrieve_all(
+        retriever,
+        recs,
+        top_k=args.top_k,
+        rerank_top=args.rerank_top,
+        retrieval_mode=args.retrieval_mode,
+        max_chunks_per_doc=args.max_chunks_per_doc,
+        near_dup_suppression=args.near_dup_suppression,
+    )
 
     cls_results: list[ClassificationResult] = []
     if not args.retrieve_only:
