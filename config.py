@@ -49,13 +49,15 @@ EMBEDDING_MODELS: dict[str, str] = {
     "e5-large-v2": "intfloat/e5-large-v2",
     "e5-mistral": "intfloat/e5-mistral-7b-instruct",
     "mpnet":      "sentence-transformers/all-mpnet-base-v2",
-    "minilm":     "sentence-transformers/all-MiniLM-L6-v2",
 }
 DEFAULT_MODEL_KEY = "bge-m3"
 
 # SPLADE sparse retriever
 SPLADE_MODEL = "naver/splade-cocondenser-ensembledistil"
 SPLADE_MAX_LENGTH = 256
+
+# Default for max chunks per doc (used in CLI and retrieval)
+DEFAULT_MAX_CHUNKS_PER_DOC = 20
 
 # Cross-encoder reranker
 
