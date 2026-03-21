@@ -124,6 +124,8 @@ class RetrievalResult:
     query: str
     ranked_chunks: list[Chunk]
     scores: list[float]
+    evidence_groups: list[str] = field(default_factory=list)
+    retrieval_mode: str = "flat_baseline"
 
 
 @dataclass
