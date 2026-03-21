@@ -14,7 +14,10 @@ import logging
 from pathlib import Path
 
 from config import (
+    DEFAULT_MAX_CHUNKS_PER_DOC,
+    DEFAULT_NEAR_DUP_SUPPRESSION,
     DEFAULT_MODEL_KEY,
+    DEFAULT_RETRIEVAL_MODE,
     DEFAULT_RERANK_TOP,
     DEFAULT_TOP_K,
     EMBEDDING_MODELS,
@@ -22,6 +25,7 @@ from config import (
     EVIDENCE_CSV,
     GOLD_STANDARD_CSV,
     OUTPUT_DIR,
+    RETRIEVAL_MODES,
     SPLADE_MAX_LENGTH,
     SPLADE_MODEL,
     WHITEPAPER_RECOMMENDATIONS_CSV,
@@ -60,6 +64,24 @@ def main() -> None:
     p_prompt.add_argument("-m", "--model", default=DEFAULT_MODEL_KEY, choices=list(EMBEDDING_MODELS))
     p_prompt.add_argument("-k", "--top-k", type=int, default=DEFAULT_TOP_K)
     p_prompt.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
+    p_prompt.add_argument(
+        "--retrieval-mode",
+        default=DEFAULT_RETRIEVAL_MODE,
+        choices=RETRIEVAL_MODES,
+        help="Evidence retrieval mode",
+    )
+    p_prompt.add_argument(
+        "--max-chunks-per-doc",
+        type=int,
+        default=DEFAULT_MAX_CHUNKS_PER_DOC,
+        help="Max chunks from the same document in final retrieved set (split mode)",
+    )
+    p_prompt.add_argument(
+        "--near-dup-suppression",
+        action="store_true",
+        default=DEFAULT_NEAR_DUP_SUPPRESSION,
+        help="Suppress near-duplicate chunks from same document (split mode)",
+    )
     p_prompt.add_argument("--no-rerank", action="store_true")
     p_prompt.add_argument("--retrieve-only", action="store_true")
     p_prompt.add_argument("--judge", action="store_true")
