@@ -15,8 +15,8 @@ torch>=2.0
 transformers>=4.40
 accelerate>=0.30
 
-# Optional: 4-bit quantisation for smaller GPUs
-# bitsandbytes>=0.43  # uncomment if using quantize_4bit=True
+# 4-bit quantisation for smaller GPUs
+bitsandbytes>=0.43
 
 # Notebooks & visualisation
 jupyter>=1.0
