@@ -15,8 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
-OUTPUT_DIR = Path("D:/outputs")  # Use D: drive for outputs (C: version below is commented)
-# OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
+OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
+# OUTPUT_DIR = Path("D:/outputs")  # Use D: drive for outputs (C: version below is commented)
 INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
@@ -50,14 +50,25 @@ EMBEDDING_MODELS: dict[str, str] = {
     "e5-mistral": "intfloat/e5-mistral-7b-instruct",
     "mpnet":      "sentence-transformers/all-mpnet-base-v2",
 }
+
+# Cross-encoder reranker model (used for reranking top-k retrieved results)
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_MODEL_KEY = "bge-m3"
 
 # SPLADE sparse retriever
 SPLADE_MODEL = "naver/splade-cocondenser-ensembledistil"
 SPLADE_MAX_LENGTH = 256
 
-# Default for max chunks per doc (used in CLI and retrieval)
-DEFAULT_MAX_CHUNKS_PER_DOC = 20
+# # Default for max chunks per doc (used in CLI and retrieval)
+# DEFAULT_MAX_CHUNKS_PER_DOC = 20
+# DEFAULT_NEAR_DUP_SUPPRESSION = False
+
+# Retrieval modes exposed in CLI / retriever.
+RETRIEVAL_MODES: list[str] = [
+    "flat_baseline",
+    "split_evidence_retrieval",
+]
+DEFAULT_RETRIEVAL_MODE = "flat_baseline"
 
 # Cross-encoder reranker
 
@@ -165,3 +176,33 @@ def normalise_doc_name(raw: str) -> str:
             if pat in low:
                 return canonical
     return raw.strip().title()
+
+
+_BINDING_LAW_DOCS: set[str] = {
+    "ESPR",
+    "Ecodesign Directive",
+    "REACH",
+    "RoHS",
+    "WEEE",
+    "Battery Regulation",
+    "CSRD",
+    "CSDDD",
+    "CRMA",
+    "Green Claims",
+    "Waste Framework",
+    "Right to Repair",
+    "Net-Zero",
+    "PPWR",
+    "CBAM",
+    "EU Chips Act",
+    "Taxonomy",
+    "Conflict Minerals",
+}
+
+
+def evidence_group_for_document(document_name: str) -> str:
+    """Map a document to one of two evidence groups used by split retrieval."""
+    canonical = normalise_doc_name(document_name)
+    if canonical in _BINDING_LAW_DOCS:
+        return "binding_law"
+    return "policy_or_recommendation_docs"
