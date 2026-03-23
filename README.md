@@ -1,19 +1,19 @@
-﻿# RAG-for-Aligning-Greener-Electronics-Recommendations
+# RAG-for-Aligning-Greener-Electronics-Recommendations
 
 ## Project
 
-This project builds a reproducible Retrieval-Augmented Generation (RAG) workflow that links sustainability recommendations to EU legislation and evaluates retrieval quality.
+Reproducible Retrieval-Augmented Generation (RAG) workflow that links sustainability recommendations to EU legislation and evaluates retrieval quality.
 
-Main stages:
-1. Chunk legal evidence.
-2. Build retrieval indices.
-3. Run retrieval (optionally with classification and judge).
-4. Run unified evaluation and robustness analysis.
-5. Visualize results in the notebook.
+Pipeline stages:
+1. Chunk legal evidence (EUR-Lex HTML → CSV).
+2. Build retrieval indices (embedding + BM25).
+3. Retrieve evidence and classify alignment (optionally with LLM judge).
+4. Run unified evaluation: document-level, projected chunk-level, and MTEB legal tasks.
+5. Visualise results in the notebook.
 
-## Usage
+---
 
-### Setup
+## Setup
 
 ```powershell
 python -m venv venv
@@ -21,18 +21,31 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-### Build data and indices
+---
+
+## Usage
+
+### 1. Chunk evidence documents
+
+Parse EUR-Lex HTML files into a structured CSV of legal provisions:
 
 ```powershell
 python retrieval/chunking_evidence.py -i data/evidence -o outputs/evidence.csv
+```
+
+### 2. Build indices
+
+Build FAISS + BM25 indices for each embedding model you want to compare:
+
+```powershell
 python main.py build -i outputs/evidence.csv -m bge-m3
 python main.py build -i outputs/evidence.csv -m e5-large-v2
 python main.py build -i outputs/evidence.csv -m e5-mistral
 ```
 
-### Run prompt retrieval/classification
+### 3. Retrieve and classify
 
-Flat baseline (existing behavior):
+**Flat baseline** (BM25 + dense + RRF + reranker):
 
 ```powershell
 python main.py prompt `
@@ -41,104 +54,202 @@ python main.py prompt `
   --model bge-m3 `
   --top-k 10 `
   --rerank-top 5 `
-  --judge `
-  --retrieval-mode flat_baseline
+  --judge
 ```
 
-Split evidence retrieval (new behavior):
+**Split evidence retrieval** (binding law vs. policy docs retrieved separately):
 
 ```powershell
 python main.py prompt `
   --input data/recommendations_whitepaper/recommendations_v2.csv `
-  --output outputs/prompt_results_2.csv `
+  --output outputs/prompt_results_split.csv `
   --model bge-m3 `
-  --top-k 10 `
-  --rerank-top 5 `
-  --judge `
   --retrieval-mode split_evidence_retrieval `
-  --max-chunks-per-doc 2 `
-  --near-dup-suppression
+  --judge
 ```
 
-Notes:
-- The `prompt` retriever is already hybrid fusion (BM25 + dense + RRF) internally.
-- `--model` selects the embedding model key (`bge-m3`, `e5-large-v2`, `e5-mistral`, ...).
-- `fusion` is not a valid `--model` key; fusion is the retrieval method used by the retriever.
+**Retrieve only** (skip LLM classification):
 
-### Run unified evaluation
+```powershell
+python main.py prompt --retrieve-only --model bge-m3
+```
+
+**Compare classifiers** (Qwen2.5-3B vs Mistral-7B):
+
+```python
+from rag.classifier import AlignmentClassifier
+clf_qwen    = AlignmentClassifier(model_key="qwen")    # default
+clf_mistral = AlignmentClassifier(model_key="mistral") # for comparison
+```
+
+### 4. Evaluate
+
+**Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite + ablation):
 
 ```powershell
 python main.py evaluate `
   --models bge-m3 e5-large-v2 e5-mistral `
-  --include-splade `
   --k-values 1 3 5 10 20 `
-  --top-k 20 `
-  --rerank-top 10 `
-  --export-k 10 `
+  --top-k 10 `
   --with-robustness
 ```
 
-### Open visualization notebook
+**Fast gold-standard-only** (no MTEB download):
 
-- notebooks/05_eval_visualizations_only.ipynb
+```powershell
+python main.py evaluate --models bge-m3 --skip-mteb
+```
 
-## Inputs and Outputs
+**Standalone evaluation script** (same as above, no main pipeline required):
 
-### Inputs
+```powershell
+python evaluation/run_eval.py --models bge-m3 --skip-mteb --output-dir results/eval
+python evaluation/run_eval.py --models bge-m3 e5-large-v2 --output-dir results/eval
+python evaluation/run_eval.py --models bge-m3 --with-robustness --output-dir results/eval
+```
 
-- data/evidence/ (EU legal HTML files)
-- data/gold_standard_doc_level/gold_standard.csv
-- data/recommendations_whitepaper/recommendations_empty.csv (optional for whitepaper export)
-- outputs/evidence.csv (generated chunk file)
+### 5. Pre-download models
 
-### Outputs
+```powershell
+python main.py download-models --embedding-models bge-m3 e5-large-v2 e5-mistral
+python main.py download-models --embedding-models bge-m3 --include-llms
+```
 
-Under outputs/eval_unified/:
-- metrics_all.csv
-- ranking_k10.csv
-- metrics_summary_k10.csv
-- comparison_k10.csv
-- run_summary.json
-- gold_retrieved_chunks_<model>_<method>.csv
-- mteb_retrieved_chunks_<model>_<method>.csv
-- whitepaper_retrieved_chunks_<model>_<method>.csv
-- robustness/*.csv (if enabled)
+### 6. Open visualisation notebook
 
-Index artifacts are saved under outputs/indices/.
+`notebooks/05_eval_visualizations_only.ipynb`
+
+---
+
+## CLI reference
+
+### `build`
+| Argument | Default | Description |
+|---|---|---|
+| `-i / --input` | required | Evidence CSV file(s) |
+| `-m / --model` | `bge-m3` | Embedding model key |
+
+### `prompt`
+| Argument | Default | Description |
+|---|---|---|
+| `-i / --input` | whitepaper CSV | Recommendations CSV |
+| `-o / --output` | `outputs/prompt_results.csv` | Output CSV |
+| `-m / --model` | `bge-m3` | Embedding model key |
+| `-k / --top-k` | `10` | Candidates before reranking |
+| `--rerank-top` | `5` | Results after reranking |
+| `--retrieval-mode` | `flat_baseline` | `flat_baseline` or `split_evidence_retrieval` |
+| `--no-rerank` | off | Skip cross-encoder reranking |
+| `--retrieve-only` | off | Skip LLM classification |
+| `--judge` | off | Run LLM judge after classification |
+
+### `evaluate`
+| Argument | Default | Description |
+|---|---|---|
+| `--models` | bge-m3 e5-large-v2 e5-mistral | Model keys to compare |
+| `--gold-csv` | `data/gold_standard_doc_level/gold_standard.csv` | Gold standard path |
+| `--output-dir` | `outputs/eval_unified` | Output directory |
+| `--top-k` | `10` | Retrieval candidates |
+| `--k-values` | `1 3 5 10 20` | Evaluation cutoffs |
+| `--skip-mteb` | off | Skip MTEB legal tasks |
+| `--skip-reranker` | off | Skip cross-encoder reranking |
+| `--force-cpu` | off | Disable GPU |
+| `--with-robustness` | off | Run ablation significance tests |
+
+---
+
+## Inputs
+
+| Path | Description |
+|---|---|
+| `data/evidence/` | EUR-Lex HTML files |
+| `data/gold_standard_doc_level/gold_standard.csv` | 275 document-level annotations |
+| `data/recommendations_whitepaper/recommendations_v2.csv` | Whitepaper recommendations |
+| `outputs/evidence.csv` | Generated chunk file (from step 1) |
+
+## Outputs
+
+| Path | Description |
+|---|---|
+| `outputs/indices/` | FAISS + BM25 index artifacts per model |
+| `outputs/prompt_results.csv` | Classification results |
+| `outputs/prompt_results_retrieved_chunks.csv` | Retrieved evidence per recommendation |
+| `outputs/eval_unified/metrics_all.csv` | All metrics across models/methods/k |
+| `outputs/eval_unified/ranking_k10.csv` | Models ranked by NDCG@10 |
+| `outputs/eval_unified/metrics_summary_k10.csv` | Summary table at k=10 |
+| `outputs/eval_unified/comparison_k10.csv` | Best vs second model gaps |
+| `outputs/eval_unified/gold_retrieved_chunks_<model>.csv` | Retrieved chunks for gold queries |
+| `outputs/eval_unified/interpretation_k10.txt` | Auto-generated interpretation |
+| `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas |
+
+---
+
+## Evaluation design
+
+Three complementary evaluation signals are produced in a single run:
+
+| Signal | Level | Source |
+|---|---|---|
+| **Gold standard** | Document | 275 manual annotations (recommendation → EU regulation) |
+| **Projected chunk** | Chunk (pseudo-relevance) | Same gold, all chunks from relevant docs marked relevant |
+| **MTEB legal tasks** | Chunk | MTEB (eng, v2) Retrieval tasks filtered to legal domain |
+
+Ablation configurations compared per model: `bm25`, `dense`, `rrf`, `bm25_rerank`, `dense_rerank`, `rrf_rerank`.
+
+Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG@k, Mean Rank.
+
+With `--with-robustness`: bootstrap 95% CI, paired permutation tests with Holm-Bonferroni correction, and per-ablation delta table.
+
+---
 
 ## Models
 
-Common embedding model keys:
-- bge-m3
-- e5-large-v2
-- e5-mistral
+**Embedding models** (key → HuggingFace ID):
+- `bge-m3` → `BAAI/bge-m3`
+- `e5-large-v2` → `intfloat/e5-large-v2`
+- `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
+- `mpnet` → `sentence-transformers/all-mpnet-base-v2`
 
-Sparse baseline:
-- splade (enabled with --include-splade)
+**LLM classifiers**:
+- `qwen` → `Qwen/Qwen2.5-3B-Instruct` (default)
+- `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (comparison baseline)
 
-Methods compared in evaluation include bm25, dense, rrf, and reranked variants.
+**Reranker**: `cross-encoder/ms-marco-MiniLM-L-6-v2`
 
-See also:
-- docs/CLI_ARGUMENTS.md for full command arguments.
+---
 
-## File Structure
+## File structure
 
-- main.py: top-level CLI.
-- retrieval/: chunking and retriever implementations.
-- indexing/: embedding and index utilities.
-- evaluation/: metrics, experiment runner, robustness statistics.
-- rag/: prompt, classifier, judge modules.
-- docs/: methodology and command docs.
-- notebooks/: analysis and plots.
-- outputs/: generated artifacts.
+```
+main.py                        top-level CLI entry point
+pipeline.py                    argparse CLI definitions
+pipeline_commands.py           command implementations
+pipeline_io.py                 I/O helpers (load/save CSV)
+config.py                      all paths, model IDs, hyperparameters
+data_models.py                 shared dataclasses (Chunk, Recommendation, ...)
 
-## Evaluation
+retrieval/
+  retrieval.py                 HybridRetriever (BM25 + FAISS + RRF + reranker)
+                               + BM25Retriever, DenseRetriever for ablation
+  reranker.py                  Reranker, RerankedRetriever (cross-encoder)
+  chunking_evidence.py         EUR-Lex HTML → structured CSV chunks
+  chunking_recommendations.py  Recommendation CSV loader
 
-Evaluation combines:
-1. Gold-standard document-level retrieval.
-2. MTEB LegalBench chunk-level retrieval.
-3. Whitepaper retrieval.
+indexing/
+  embeddings.py                embed_texts, get_embed_model
+  indices.py                   build_faiss_index, build_bm25_index, load_indices
+  chunks.py                    load_chunks, load_and_merge_chunks
 
-Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG, Mean Rank.
+evaluation/
+  evaluate.py                  unified evaluation (gold + projected + MTEB + ablation)
+  run_eval.py                  standalone evaluation CLI
+  metrics.py                   Hit@k, Recall, MRR, NDCG, bootstrap CI, ...
 
-With robustness enabled, the pipeline also reports bootstrap confidence intervals, paired permutation tests.
+rag/
+  classifier.py                AlignmentClassifier (Qwen / Mistral)
+  llm_judge.py                 LLMJudge (LLM-as-judge evaluation)
+  prompts.py                   prompt templates
+
+notebooks/                     analysis and visualisation
+outputs/                       generated artifacts (indices, results, eval)
+data/                          evidence HTML, gold standard, recommendations
+```
