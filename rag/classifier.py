@@ -26,6 +26,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import (
     ALIGNMENT_LABELS,
+    JUDGE_MODEL,
     LLM_CPU_MAX_MEMORY,
     LLM_GPU_MAX_MEMORY,
     LLM_MODEL,
@@ -41,6 +42,12 @@ logger = logging.getLogger(__name__)
 
 # Default open-source model
 DEFAULT_CLASSIFIER_MODEL = LLM_MODEL
+
+# Short-key aliases so callers can pass "qwen" or "mistral" instead of the full HF ID.
+CLASSIFIER_MODEL_KEYS: dict[str, str] = {
+    "qwen": LLM_MODEL,
+    "mistral": JUDGE_MODEL,
+}
 
 
 def _parse_json_response(raw: str) -> dict:
@@ -88,12 +95,15 @@ class AlignmentClassifier:
     def __init__(
         self,
         model_name: str = DEFAULT_CLASSIFIER_MODEL,
+        model_key: str | None = None,
         quantize_4bit: bool = LLM_QUANTIZE_4BIT,
         device_map: str = "auto",
         max_new_tokens: int = LLM_MAX_TOKENS,
         temperature: float = LLM_TEMPERATURE,
         offload_folder: Path = LLM_OFFLOAD_DIR / "classifier",
     ) -> None:
+        if model_key is not None:
+            model_name = CLASSIFIER_MODEL_KEYS.get(model_key, model_name)
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
