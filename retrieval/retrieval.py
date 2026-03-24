@@ -30,8 +30,6 @@ import faiss
 from rank_bm25 import BM25Okapi
 
 from config import (
-    DEFAULT_MAX_CHUNKS_PER_DOC,
-    DEFAULT_NEAR_DUP_SUPPRESSION,
     DEFAULT_MODEL_KEY,
     DEFAULT_RETRIEVAL_MODE,
     DEFAULT_TOP_K,
@@ -40,6 +38,7 @@ from config import (
     RRF_K,
     evidence_group_for_document,
 )
+import config as _config
 from data_models import Chunk, RetrievalResult
 from embedding_indexing import (
     get_embed_model,
@@ -47,6 +46,9 @@ from embedding_indexing import (
     load_indices,
     tokenize,
 )
+
+DEFAULT_MAX_CHUNKS_PER_DOC = int(getattr(_config, "DEFAULT_MAX_CHUNKS_PER_DOC", 0))
+DEFAULT_NEAR_DUP_SUPPRESSION = bool(getattr(_config, "DEFAULT_NEAR_DUP_SUPPRESSION", False))
 
 # Low-level search primitives
 
