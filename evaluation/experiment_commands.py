@@ -43,6 +43,12 @@ from evaluation.evaluation import (
     per_query_retrieval_scores,
 )
 from evaluation.metrics import bootstrap_ci, compute_retrieval_metrics, paired_permutation_test
+from evaluation.full_eval import (
+    add_significance_markers,
+    build_ablation_table,
+    collect_per_query_scores,
+    format_ablation_report,
+)
 from retrieval.bm25_retriever import BM25Retriever
 from retrieval.dense_retriever import DenseRetriever
 from retrieval.hybrid_retriever import HybridRetriever as CompositeHybridRetriever
@@ -834,6 +840,37 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
     comparison_k10_csv = args.output_dir / "comparison_k10.csv"
     summary_k10_df.to_csv(summary_k10_csv, index=False)
     comparison_k10_df.to_csv(comparison_k10_csv, index=False)
+
+    # Publishable ablation table (integrated from evaluation.publishable_eval)
+    try:
+        ablation_k = 10 if 10 in set(args.k_values) else max(set(args.k_values))
+        ablation_df = build_ablation_table(metrics_csv, k=ablation_k)
+
+        if args.with_robustness:
+            per_query_csv = args.output_dir / "per_query_scores_for_ablation.csv"
+            per_query_df = collect_per_query_scores(
+                gold_csv=args.gold_csv,
+                model_keys=args.models,
+                k=ablation_k,
+                skip_reranker=args.skip_reranker,
+                out_csv=per_query_csv,
+            )
+            ablation_out = add_significance_markers(ablation_df, per_query_df)
+            summary["outputs"]["per_query_scores_for_ablation"] = str(per_query_csv)
+        else:
+            ablation_out = ablation_df
+
+        ablation_csv = args.output_dir / "ablation_table.csv"
+        ablation_txt = args.output_dir / "ablation_table.txt"
+        ablation_out.to_csv(ablation_csv)
+        ablation_txt.write_text(
+            format_ablation_report(ablation_out, k=ablation_k),
+            encoding="utf-8",
+        )
+        summary["outputs"]["ablation_table"] = str(ablation_csv)
+        summary["outputs"]["ablation_table_txt"] = str(ablation_txt)
+    except Exception as exc:
+        print(f"[warn] Ablation table generation skipped: {exc}")
 
     interpretation_lines: list[str] = [
         "Unified Evaluation Interpretation (k=10)",
