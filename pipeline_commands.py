@@ -7,7 +7,12 @@ from typing import Any
 from config import DEFAULT_MODEL_KEY, EVIDENCE_CSV, INDEX_DIR
 from data_models import ClassificationResult
 from embedding_indexing import build_index, build_merged_index
-from evaluation.experiment_commands import cmd_download_models, cmd_robustness, cmd_unified_eval
+from evaluation.experiment_commands import (
+    cmd_download_models,
+    cmd_merge_eval,
+    cmd_robustness,
+    cmd_unified_eval,
+)
 from pipeline_io import (
     load_recommendations,
     save_judge_results_csv,
@@ -22,6 +27,7 @@ __all__ = [
     "cmd_prompt",
     "cmd_evaluate",
     "cmd_download_models",
+    "cmd_merge_eval",
 ]
 
 
@@ -183,6 +189,14 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     print(f"[evaluate] Unified outputs directory: {args.output_dir}")
 
     cmd_unified_eval(args)
+
+    if args.remote_eval_csv:
+        merge_args = argparse.Namespace(
+            remote_csv=args.remote_eval_csv,
+            output_dir=Path(args.output_dir),
+            ranking_k=10,
+        )
+        cmd_merge_eval(merge_args)
 
     if not args.with_robustness:
         return

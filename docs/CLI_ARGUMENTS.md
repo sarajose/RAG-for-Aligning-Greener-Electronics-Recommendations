@@ -135,6 +135,27 @@ Arguments:
 - `--robust-k` (optional int)
   - Robustness k.
   - Default: `10`
+- `--remote-eval-csv` (optional, one or more paths)
+  - One or more remote `metrics_all.csv` files (for example from Kaggle) to merge automatically after local evaluation.
+
+## Command: merge-eval
+
+Usage:
+
+```powershell
+python main.py merge-eval --remote-csv <path/to/metrics_all.csv> [options]
+```
+
+Arguments:
+
+- `--remote-csv` (required, one or more paths)
+  - Remote metrics CSV file(s) to merge into local unified evaluation outputs.
+- `--output-dir` (optional path)
+  - Unified evaluation output directory.
+  - Default: `outputs/eval_unified`
+- `--ranking-k` (optional int)
+  - K used for ranking and summary regeneration.
+  - Default: `10`
 
 ## Command: download-models
 
