@@ -1,4 +1,4 @@
-# RAG-for-Aligning-Greener-Electronics-Recommendations
+﻿# RAG-for-Aligning-Greener-Electronics-Recommendations
 
 ## Project
 
@@ -84,7 +84,16 @@ clf_mistral = AlignmentClassifier(model_key="mistral") # for comparison
 
 ### 4. Evaluate
 
-**Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite + ablation):
+**Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite + ablation table):
+
+```powershell
+python main.py evaluate `
+  --models bge-m3 e5-large-v2 e5-mistral `
+  --k-values 1 3 5 10 20 `
+  --top-k 10
+```
+
+**Ablation with significance stars** (adds per-query scoring + permutation-test markers):
 
 ```powershell
 python main.py evaluate `
@@ -174,6 +183,9 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `outputs/prompt_results.csv` | Classification results |
 | `outputs/prompt_results_retrieved_chunks.csv` | Retrieved evidence per recommendation |
 | `outputs/eval_unified/metrics_all.csv` | All metrics across models/methods/k |
+| `outputs/eval_unified/ablation_table.csv` | Ablation table (method × model × metric) |
+| `outputs/eval_unified/ablation_table.txt` | Human-readable ablation report |
+| `outputs/eval_unified/per_query_scores_for_ablation.csv` | Per-query scores used for significance stars (`--with-robustness`) |
 | `outputs/eval_unified/ranking_k10.csv` | Models ranked by NDCG@10 |
 | `outputs/eval_unified/metrics_summary_k10.csv` | Summary table at k=10 |
 | `outputs/eval_unified/comparison_k10.csv` | Best vs second model gaps |
