@@ -103,6 +103,23 @@ python main.py evaluate `
   --with-robustness
 ```
 
+**One-command local + Kaggle merge** (run local eval and merge downloaded Kaggle metrics in the same command):
+
+```powershell
+python main.py evaluate `
+  --models bge-m3 e5-large-v2 mpnet `
+  --output-dir outputs/eval_unified `
+  --remote-eval-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv
+```
+
+**Merge-only command** (if local evaluation was already run):
+
+```powershell
+python main.py merge-eval `
+  --remote-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv `
+  --output-dir outputs/eval_unified
+```
+
 **Fast gold-standard-only** (no MTEB download):
 
 ```powershell
@@ -123,11 +140,6 @@ python evaluation/run_eval.py --models bge-m3 --with-robustness --output-dir res
 python main.py download-models --embedding-models bge-m3 e5-large-v2 e5-mistral
 python main.py download-models --embedding-models bge-m3 --include-llms
 ```
-
-### 6. Open visualisation notebook
-
-`notebooks/05_eval_visualizations_only.ipynb`
-
 ---
 
 ## CLI reference
@@ -150,6 +162,8 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--no-rerank` | off | Skip cross-encoder reranking |
 | `--retrieve-only` | off | Skip LLM classification |
 | `--judge` | off | Run LLM judge after classification |
+| `--max-chunks-per-doc` | `2` | Cap chunks per document in split retrieval mode |
+| `--near-dup-suppression` | off | Enable near-duplicate suppression in split mode |
 
 ### `evaluate`
 | Argument | Default | Description |
@@ -158,11 +172,34 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--gold-csv` | `data/gold_standard_doc_level/gold_standard.csv` | Gold standard path |
 | `--output-dir` | `outputs/eval_unified` | Output directory |
 | `--top-k` | `10` | Retrieval candidates |
+| `--rerank-top` | `5` | Results kept after reranking |
+| `--export-k` | `10` | Number of retrieved chunks exported per query |
 | `--k-values` | `1 3 5 10 20` | Evaluation cutoffs |
+| `--whitepaper-csv` | recommendations CSV | Whitepaper recommendations path |
+| `--skip-whitepaper` | off | Skip whitepaper chunk export |
+| `--mteb-dataset` | `mteb/legalbench_consumer_contracts_qa` | MTEB retrieval dataset |
+| `--mteb-split` | `test` | MTEB split |
+| `--max-corpus` | `20000` | MTEB corpus cap |
+| `--full-mteb` | off | Use full MTEB corpus |
 | `--skip-mteb` | off | Skip MTEB legal tasks |
 | `--skip-reranker` | off | Skip cross-encoder reranking |
+| `--auto-build-indices` | off | Build missing indices automatically |
+| `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV used for auto-build |
+| `--include-splade` | off | Include SPLADE sparse baseline |
+| `--splade-model` | default in `config.py` | SPLADE model id |
+| `--splade-max-length` | default in `config.py` | SPLADE max token length |
+| `--remote-eval-csv` | none | Kaggle/remote `metrics_all.csv` path(s) to merge after local eval |
 | `--force-cpu` | off | Disable GPU |
 | `--with-robustness` | off | Run ablation significance tests |
+| `--robust-model` | first model in `--models` | Model used for robustness stage |
+| `--robust-k` | `10` | K used for robustness stage |
+
+### `merge-eval`
+| Argument | Default | Description |
+|---|---|---|
+| `--remote-csv` | required | One or more remote `metrics_all.csv` files |
+| `--output-dir` | `outputs/eval_unified` | Unified output directory |
+| `--ranking-k` | `10` | K used for ranking/summary regeneration |
 
 ---
 
@@ -209,7 +246,7 @@ Ablation configurations compared per model: `bm25`, `dense`, `rrf`, `bm25_rerank
 
 Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG@k, Mean Rank.
 
-With `--with-robustness`: bootstrap 95% CI, paired permutation tests with Holm-Bonferroni correction, and per-ablation delta table.
+With `--with-robustness`: bootstrap 95% CI and paired permutation tests with significance stars.
 
 ---
 
