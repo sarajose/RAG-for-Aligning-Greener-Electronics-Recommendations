@@ -214,20 +214,22 @@ def extract_paragraphs(article: Tag) -> list[dict]:
     paragraphs: list[dict] = []
     seen_texts: set[str] = set()
 
-    # ── Numbered paragraphs: include nested EUR-Lex norm blocks.
+    # ── Numbered and unnumbered div.norm blocks: include nested EUR-Lex blocks.
     for div in article.find_all("div", class_="norm"):
         span = div.find("span", class_="no-parag")
-        if not span:
-            continue
-        para_num = clean(span.get_text()).rstrip(".").strip()
+        para_num = clean(span.get_text()).rstrip(".").strip() if span else ""
 
         body_tag = (
             div.find("div", class_="inline-element")
             or div.find("p", class_="inline-element")
         )
-        text = tag_text(body_tag) if body_tag else clean(
-            div.get_text().replace(span.get_text(), "", 1)
-        )
+        if body_tag:
+            text = tag_text(body_tag)
+        else:
+            raw = div.get_text()
+            if span:
+                raw = raw.replace(span.get_text(), "", 1)
+            text = clean(raw)
         if text and text not in seen_texts:
             seen_texts.add(text)
             paragraphs.append({"para_num": para_num, "text": text})
