@@ -212,14 +212,13 @@ def extract_paragraphs(article: Tag) -> list[dict]:
     so that "shall/except/where" clauses remain together.
     """
     paragraphs: list[dict] = []
-    seen: set[int] = set()
+    seen_texts: set[str] = set()
 
-    # ── Numbered paragraphs: <div class="norm"> with <span class="no-parag">
-    for div in article.find_all("div", class_="norm", recursive=False):
+    # ── Numbered paragraphs: include nested EUR-Lex norm blocks.
+    for div in article.find_all("div", class_="norm"):
         span = div.find("span", class_="no-parag")
         if not span:
             continue
-        seen.add(id(div))
         para_num = clean(span.get_text()).rstrip(".").strip()
 
         body_tag = (
@@ -229,17 +228,20 @@ def extract_paragraphs(article: Tag) -> list[dict]:
         text = tag_text(body_tag) if body_tag else clean(
             div.get_text().replace(span.get_text(), "", 1)
         )
-        if text:
+        if text and text not in seen_texts:
+            seen_texts.add(text)
             paragraphs.append({"para_num": para_num, "text": text})
 
-    # ── Unnumbered standalone <p class="norm"> (direct children)
-    for p in article.find_all("p", class_="norm", recursive=False):
-        if id(p) in seen:
+    # ── Unnumbered standalone <p class="norm"> (including nested blocks)
+    for p in article.find_all("p", class_="norm"):
+        # Skip paragraph wrappers already captured by numbered div.norm blocks.
+        if p.find_parent("div", class_="norm"):
             continue
         if p.find_parent("div", class_="eli-title"):
             continue
         txt = tag_text(p)
-        if txt and len(txt) > 15:
+        if txt and len(txt) > 15 and txt not in seen_texts:
+            seen_texts.add(txt)
             paragraphs.append({"para_num": "", "text": txt})
 
     return paragraphs
