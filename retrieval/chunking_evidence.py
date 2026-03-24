@@ -187,6 +187,9 @@ def get_article_heading(art: Tag) -> tuple[str, str]:
     inside the  <div class="eli-title"> wrapper.
     """
     num_tag = art.find("p", class_="title-article-norm")
+    if num_tag is None:
+        # Newer EUR-Lex renderings often use oj-ti-art / oj-sti-art classes.
+        num_tag = art.find("p", class_="oj-ti-art")
     number = tag_text(num_tag) if num_tag else ""
 
     subtitle = ""
@@ -195,6 +198,8 @@ def get_article_heading(art: Tag) -> tuple[str, str]:
         st = title_div.find(
             "p", class_=re.compile(r"stitle-article-norm|^norm$")
         )
+        if st is None:
+            st = title_div.find("p", class_="oj-sti-art")
         if st:
             subtitle = tag_text(st)
     return number, subtitle
@@ -212,7 +217,6 @@ def extract_paragraphs(article: Tag) -> list[dict]:
     so that "shall/except/where" clauses remain together.
     """
     paragraphs: list[dict] = []
-    seen_texts: set[str] = set()
 
     # ── Numbered and unnumbered div.norm blocks: include nested EUR-Lex blocks.
     for div in article.find_all("div", class_="norm"):
@@ -230,8 +234,7 @@ def extract_paragraphs(article: Tag) -> list[dict]:
             if span:
                 raw = raw.replace(span.get_text(), "", 1)
             text = clean(raw)
-        if text and text not in seen_texts:
-            seen_texts.add(text)
+        if text:
             paragraphs.append({"para_num": para_num, "text": text})
 
     # ── Unnumbered standalone <p class="norm"> (including nested blocks)
@@ -242,9 +245,33 @@ def extract_paragraphs(article: Tag) -> list[dict]:
         if p.find_parent("div", class_="eli-title"):
             continue
         txt = tag_text(p)
-        if txt and len(txt) > 15 and txt not in seen_texts:
-            seen_texts.add(txt)
+        if txt and len(txt) > 15:
             paragraphs.append({"para_num": "", "text": txt})
+
+    # ── EUR-Lex oj-* layout variant used in several regulations/directives.
+    for p in article.find_all("p"):
+        classes = {c.lower() for c in (p.get("class") or [])}
+        if not classes:
+            continue
+        # Keep only body-like blocks; skip headings/notes.
+        if "oj-note" in classes:
+            continue
+        if classes.intersection({"oj-ti-art", "oj-sti-art", "title-article-norm", "stitle-article-norm"}):
+            continue
+        if not classes.intersection({"oj-normal", "oj-alinea", "oj-limb", "oj-list"}):
+            continue
+
+        txt = tag_text(p)
+        if not txt or len(txt) <= 15:
+            continue
+
+        # Recover simple numbering styles: "1. ...", "(a) ...", "a) ...".
+        para_num = ""
+        m = re.match(r"^\(?([0-9]+|[A-Za-z])\)?[.)]\s+", txt)
+        if m:
+            para_num = m.group(1)
+
+        paragraphs.append({"para_num": para_num, "text": txt})
 
     return paragraphs
 
