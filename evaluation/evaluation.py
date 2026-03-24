@@ -32,6 +32,23 @@ from evaluation.metrics import (
 logger = logging.getLogger(__name__)
 
 
+def _read_text_with_fallback_encodings(path: Path) -> str:
+    """Read text with a small ordered set of encodings for Windows CSV compatibility."""
+    encodings = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
+    last_error: UnicodeDecodeError | None = None
+    for enc in encodings:
+        try:
+            return path.read_text(encoding=enc)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+
+    # Should be unreachable because latin-1 can decode any byte sequence.
+    if last_error is not None:
+        raise last_error
+    return path.read_text(encoding="utf-8")
+
+
 def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
     for k in keys:
         if k in row and row[k] is not None:
@@ -42,27 +59,27 @@ def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
 def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardEntry]:
     """Load gold-standard entries from CSV with tolerant column handling."""
     entries: list[GoldStandardEntry] = []
-    with open(csv_path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            entries.append(
-                GoldStandardEntry(
-                    paper=_pick(row, "Paper"),
-                    source_page=_pick(row, "source_page"),
-                    source_line=_pick(row, "source_line"),
-                    recommendation_text=_pick(row, "recommendation_text", "recommendation"),
-                    source_snippet_original=_pick(row, "source_snippet_original"),
-                    recommendation_or_statement=_pick(row, "recommendation_or_statement"),
-                    doc_short_name=_pick(row, "doc_short_name", "legal_doc_reference", "document"),
-                    doc_type=_pick(row, "doc_type"),
-                    doc_ref_num=_pick(row, "doc_ref_num"),
-                    doc_reference_raw_excerpt=_pick(row, "doc_reference_raw_excerpt"),
-                    evidence_span=_pick(row, "evidence_span"),
-                    reference_basis=_pick(row, "reference_basis"),
-                    needs_review=_pick(row, "needs_review"),
-                    context_excerpt=_pick(row, "context_excerpt"),
-                    alignment_label=_pick(row, "alignment_label") or None,
-                )
+    text = _read_text_with_fallback_encodings(csv_path)
+    for row in csv.DictReader(text.splitlines()):
+        entries.append(
+            GoldStandardEntry(
+                paper=_pick(row, "Paper"),
+                source_page=_pick(row, "source_page"),
+                source_line=_pick(row, "source_line"),
+                recommendation_text=_pick(row, "recommendation_text", "recommendation"),
+                source_snippet_original=_pick(row, "source_snippet_original"),
+                recommendation_or_statement=_pick(row, "recommendation_or_statement"),
+                doc_short_name=_pick(row, "doc_short_name", "legal_doc_reference", "document"),
+                doc_type=_pick(row, "doc_type"),
+                doc_ref_num=_pick(row, "doc_ref_num"),
+                doc_reference_raw_excerpt=_pick(row, "doc_reference_raw_excerpt"),
+                evidence_span=_pick(row, "evidence_span"),
+                reference_basis=_pick(row, "reference_basis"),
+                needs_review=_pick(row, "needs_review"),
+                context_excerpt=_pick(row, "context_excerpt"),
+                alignment_label=_pick(row, "alignment_label") or None,
             )
+        )
     logger.info("Loaded %d gold-standard rows from %s", len(entries), csv_path)
     return entries
 
@@ -188,16 +205,16 @@ def per_query_retrieval_scores(
 def load_whitepaper_recommendations(csv_path: Path) -> list[dict[str, str]]:
     """Load whitepaper recommendations from a semicolon-delimited CSV."""
     rows: list[dict[str, str]] = []
-    with open(csv_path, encoding="utf-8") as f:
-        for row in csv.DictReader(f, delimiter=";"):
-            rows.append(
-                {
-                    "section": (row.get("section") or "").strip(),
-                    "subsection": (row.get("subsection") or "").strip(),
-                    "title": (row.get("title") or "").strip(),
-                    "recommendation": (row.get("recommendation") or "").strip(),
-                }
-            )
+    text = _read_text_with_fallback_encodings(csv_path)
+    for row in csv.DictReader(text.splitlines(), delimiter=";"):
+        rows.append(
+            {
+                "section": (row.get("section") or "").strip(),
+                "subsection": (row.get("subsection") or "").strip(),
+                "title": (row.get("title") or "").strip(),
+                "recommendation": (row.get("recommendation") or "").strip(),
+            }
+        )
     return rows
 
 
