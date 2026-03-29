@@ -107,7 +107,7 @@ python main.py evaluate `
 
 ```powershell
 python main.py evaluate `
-  --models bge-m3 e5-large-v2 mpnet `
+  --models bge-m3 e5-large-v2 e5-mistral `
   --output-dir outputs/eval_unified `
   --remote-eval-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv
 ```
@@ -126,13 +126,76 @@ python main.py merge-eval `
 python main.py evaluate --models bge-m3 --skip-mteb
 ```
 
-**Standalone evaluation script** (same as above, no main pipeline required):
+**Thesis study script** (Mar-17-style robust reproduction + ablation + baseline delta):
 
 ```powershell
-python evaluation/run_eval.py --models bge-m3 --skip-mteb --output-dir results/eval
-python evaluation/run_eval.py --models bge-m3 e5-large-v2 --output-dir results/eval
-python evaluation/run_eval.py --models bge-m3 --with-robustness --output-dir results/eval
+python evaluation/full_study.py retrieval-study `
+  --models bge-m3 e5-large-v2 e5-mistral `
+  --include-splade `
+  --with-robustness-all-models `
+  --output-dir outputs/eval_thesis `
+  --old-metrics-csv outputs/eval_unified_old/metrics_all.csv
 ```
+
+**K comparison (k=1,3,5,10,20) from existing metrics CSV**:
+
+```powershell
+python evaluation/full_study.py k-compare `
+  --metrics-csv outputs/eval_unified_old/metrics_all.csv `
+  --k-values 1 3 5 10 20 `
+  --output-dir outputs/eval_k_compare
+```
+
+**Prompt/judge analysis summary export**:
+
+```powershell
+python evaluation/full_study.py prompt-study `
+  --prompt-csv outputs/prompt_results.csv `
+  --judge-csv outputs/prompt_results_judge.csv `
+  --output-dir outputs/eval_prompt
+```
+
+**Full pipeline (local + Kaggle merge for e5-mistral)**:
+
+```powershell
+# 1) Local evidence + indices (lightweight local models)
+python retrieval/chunking_evidence.py -i data/evidence -o outputs/evidence.csv
+python main.py build -i outputs/evidence.csv -m bge-m3
+python main.py build -i outputs/evidence.csv -m e5-large-v2
+# Optional if your local machine can handle it:
+# python main.py build -i outputs/evidence.csv -m e5-mistral
+
+# 2) Local unified evaluation + robustness
+python evaluation/full_study.py retrieval-study `
+  --models bge-m3 e5-large-v2 `
+  --include-splade `
+  --with-robustness-all-models `
+  --output-dir outputs/eval_thesis
+
+# 3) Kaggle run for heavy model (e5-mistral-7b-instruct), then merge metrics locally
+python main.py merge-eval `
+  --remote-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv `
+  --output-dir outputs/eval_thesis
+
+# 4) Optional Kaggle classifier + judge comparison
+# Notebook: kaggle/kaggle_mistral_classifier_judge_pipeline.ipynb
+# Upload: outputs/qwen_classifications.csv + outputs/qwen_classifications_retrieved_chunks.csv
+# Download: classification_eval.csv, judge_scores_qwen3b.csv, judge_scores_mistral7b.csv
+```
+
+**Kaggle notebook handoff (explicit):**
+
+1. Run `kaggle/kaggle_e5_mistral_eval_v2_pipeline.ipynb` to evaluate `e5-mistral` and export:
+  - `eval_unified/metrics_all.csv` (for local `merge-eval`)
+  - `retrieved_chunks.csv` (optional direct input for notebook 2)
+2. Merge `metrics_all.csv` locally with `python main.py merge-eval ...`.
+3. Select best retrieval model from merged metrics and run local prompt classification:
+  - `python main.py prompt --model <BEST_MODEL> --output outputs/qwen_classifications.csv`
+4. Run `kaggle/kaggle_mistral_classifier_judge_pipeline.ipynb` using:
+  - `qwen_classifications.csv`
+  - `retrieved_chunks.csv` or `qwen_classifications_retrieved_chunks.csv`
+5. Use notebook 2 outputs in thesis tables/analysis:
+  - `classification_eval.csv`, `judge_scores_qwen3b.csv`, `judge_scores_mistral7b.csv`
 
 ### 5. Pre-download models
 
@@ -256,7 +319,6 @@ With `--with-robustness`: bootstrap 95% CI and paired permutation tests with sig
 - `bge-m3` → `BAAI/bge-m3`
 - `e5-large-v2` → `intfloat/e5-large-v2`
 - `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
-- `mpnet` → `sentence-transformers/all-mpnet-base-v2`
 
 **LLM classifiers**:
 - `qwen` → `Qwen/Qwen2.5-3B-Instruct` (default)
@@ -290,7 +352,7 @@ indexing/
 
 evaluation/
   evaluate.py                  unified evaluation (gold + projected + MTEB + ablation)
-  run_eval.py                  standalone evaluation CLI
+  full_study.py                thesis full-study CLI (retrieval-study, prompt-study, k-compare)
   metrics.py                   Hit@k, Recall, MRR, NDCG, bootstrap CI, ...
 
 rag/
