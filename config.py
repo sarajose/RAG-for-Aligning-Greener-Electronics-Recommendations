@@ -48,7 +48,6 @@ EMBEDDING_MODELS: dict[str, str] = {
     "bge-m3":     "BAAI/bge-m3",
     "e5-large-v2": "intfloat/e5-large-v2",
     "e5-mistral": "intfloat/e5-mistral-7b-instruct",
-    "mpnet":      "sentence-transformers/all-mpnet-base-v2",
 }
 
 # Cross-encoder reranker model (used for reranking top-k retrieved results)
