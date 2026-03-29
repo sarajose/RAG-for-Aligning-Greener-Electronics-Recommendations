@@ -49,6 +49,16 @@ def _read_text_with_fallback_encodings(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _detect_delimiter(sample: str) -> str:
+    """Detect whether CSV is comma or semicolon delimited."""
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+        return dialect.delimiter
+    except csv.Error:
+        # Default to comma for backward compatibility.
+        return ","
+
+
 def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
     for k in keys:
         if k in row and row[k] is not None:
@@ -60,7 +70,9 @@ def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardE
     """Load gold-standard entries from CSV with tolerant column handling."""
     entries: list[GoldStandardEntry] = []
     text = _read_text_with_fallback_encodings(csv_path)
-    for row in csv.DictReader(text.splitlines()):
+    sample = "\n".join(text.splitlines()[:20])
+    delimiter = _detect_delimiter(sample)
+    for row in csv.DictReader(text.splitlines(), delimiter=delimiter):
         entries.append(
             GoldStandardEntry(
                 paper=_pick(row, "Paper"),
