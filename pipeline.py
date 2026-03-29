@@ -78,9 +78,19 @@ def main() -> None:
     p_eval.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
     p_eval.add_argument("--export-k", type=int, default=10)
     p_eval.add_argument("--k-values", type=int, nargs="+", default=EVAL_K_VALUES)
-    p_eval.add_argument("--mteb-dataset", default="mteb/legalbench_consumer_contracts_qa")
+    p_eval.add_argument(
+        "--mteb-dataset",
+        default="mteb/legalbench_consumer_contracts_qa",
+        help="MTEB dataset HF id or a local dataset directory saved with datasets.load_from_disk.",
+    )
     p_eval.add_argument("--mteb-split", default="test")
     p_eval.add_argument("--max-corpus", type=int, default=20000)
+    p_eval.add_argument(
+        "--mteb-embed-batch-size",
+        type=int,
+        default=32,
+        help="Embedding batch size used while building MTEB dense indices (lower = less memory).",
+    )
     p_eval.add_argument("--full-mteb", action="store_true")
     p_eval.add_argument("--skip-whitepaper", action="store_true")
     p_eval.add_argument("--skip-mteb", action="store_true", help="Skip MTEB legal tasks (faster)")
