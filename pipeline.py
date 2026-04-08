@@ -99,6 +99,8 @@ def main() -> None:
     p_eval.add_argument("--auto-build-indices", action="store_true")
     p_eval.add_argument("--evidence-csv", type=Path, default=EVIDENCE_CSV)
     p_eval.add_argument("--include-splade", action="store_true")
+    p_eval.add_argument("--include-colbert", action="store_true",
+                        help="Include BGE-M3 ColBERT multi-vector baseline (requires FlagEmbedding)")
     p_eval.add_argument("--splade-model", default=SPLADE_MODEL)
     p_eval.add_argument("--splade-max-length", type=int, default=SPLADE_MAX_LENGTH)
     p_eval.add_argument("--remote-eval-csv", nargs="+", default=None)

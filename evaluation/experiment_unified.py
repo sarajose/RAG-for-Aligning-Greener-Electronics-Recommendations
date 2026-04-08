@@ -27,6 +27,7 @@ from evaluation.experiment_helpers import (
 )
 from retrieval.reranker import RerankedRetriever, Reranker
 from retrieval.splade_retriever import SPLADERetriever
+from retrieval.colbert_retriever import ColBERTRetriever
 
 
 def cmd_unified_eval(args: argparse.Namespace) -> None:
@@ -326,6 +327,69 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     print(f"[warn] Skipping MTEB for model=splade due to memory limits: {exc}")
                 else:
                     raise
+
+    if getattr(args, "include_colbert", False):
+        print("\n=== BGE-M3 ColBERT multi-vector baseline ===")
+        base_model_for_chunks = args.models[0] if args.models else next(iter(EMBEDDING_MODELS))
+        if not _indices_exist(base_model_for_chunks):
+            raise FileNotFoundError(
+                f"ColBERT needs chunk artifacts from '{base_model_for_chunks}'. "
+                "Build with main.py build or --auto-build-indices."
+            )
+        colbert_base = ColBERTRetriever.from_disk(model_key=base_model_for_chunks)
+        colbert_retrievers: dict[str, Any] = {"colbert": colbert_base}
+        if reranker is not None:
+            colbert_retrievers["colbert_rerank"] = RerankedRetriever(
+                colbert_base, reranker,
+                initial_k=max(args.top_k * 2, 30),
+                final_k=args.rerank_top,
+            )
+
+        for method_name, retriever in colbert_retrievers.items():
+            print(f"[gold-doc] Evaluating {method_name} ...")
+            metrics_by_k = evaluate_retrieval(
+                retriever,
+                gold_path=args.gold_csv,
+                k_values=sorted(set(args.k_values)),
+                top_k_retrieve=max(args.top_k * 3, 30),
+                rerank_top=args.rerank_top,
+            )
+            metrics_rows.extend(
+                _metrics_to_rows(
+                    metrics_by_k,
+                    dataset="gold_standard",
+                    level="document",
+                    model_key="colbert",
+                    method=method_name,
+                )
+            )
+            any_metric = next(iter(metrics_by_k.values()))
+            if int(getattr(any_metric, "num_queries", 0)) == 0:
+                raise RuntimeError(
+                    "Gold-standard evaluation produced 0 queries. "
+                    "Check gold CSV delimiter/columns and input path."
+                )
+            _checkpoint_metrics(f"gold eval colbert/{method_name}")
+
+        export_method = "colbert_rerank" if "colbert_rerank" in colbert_retrievers else "colbert"
+        export_gold_retrieved_chunks(
+            retriever=colbert_retrievers[export_method],
+            model_key="colbert",
+            method=export_method,
+            gold_csv=args.gold_csv,
+            out_csv=args.output_dir / f"gold_retrieved_chunks_colbert_{export_method}.csv",
+            top_k=args.export_k,
+        )
+
+        if not args.skip_whitepaper:
+            export_whitepaper_retrieved_chunks(
+                retriever=colbert_retrievers[export_method],
+                model_key="colbert",
+                method=export_method,
+                whitepaper_csv=args.whitepaper_csv,
+                out_csv=args.output_dir / f"whitepaper_retrieved_chunks_colbert_{export_method}.csv",
+                top_k=args.export_k,
+            )
 
     metrics_df = pd.DataFrame(metrics_rows)
     metrics_df.to_csv(metrics_csv, index=False)
