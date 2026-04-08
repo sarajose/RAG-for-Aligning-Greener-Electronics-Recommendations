@@ -102,6 +102,12 @@ OUTPUT FORMAT (strict JSON — no markdown fences)
   "overall_score": <float — average of the three>,
   "reasoning": "<1-3 sentences explaining your assessment>"
 }
+
+LANGUAGE REQUIREMENT (mandatory)
+────────────────────────────────
+- Write all fields in English only.
+- The "reasoning" field must be English prose (no Chinese or other languages).
+- If uncertain, still answer in English.
 """
 
 JUDGE_USER_TEMPLATE = """\

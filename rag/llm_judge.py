@@ -76,8 +76,23 @@ def _parse_judge_response(raw: str) -> dict:
             "justification_score": 1,
             "evidence_score": 1,
             "overall_score": 1.0,
-            "reasoning": f"PARSE_ERROR: {raw[:200]}",
+            "reasoning": "PARSE_ERROR: Judge response was not valid JSON. Default scores were assigned.",
         }
+
+
+def _contains_cjk(text: str) -> bool:
+    """Return True when text contains CJK characters."""
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+
+def _normalize_reasoning_to_english(reasoning: str) -> str:
+    """Guarantee English fallback reasoning for downstream CSV outputs."""
+    if _contains_cjk(reasoning):
+        return (
+            "Reasoning contained non-English text; the judge result was retained, "
+            "but the explanation was normalized to English."
+        )
+    return reasoning
 
 
 class LLMJudge:
@@ -213,7 +228,7 @@ class LLMJudge:
             justification_score=parsed["justification_score"],
             evidence_score=parsed["evidence_score"],
             overall_score=parsed["overall_score"],
-            reasoning=parsed["reasoning"],
+            reasoning=_normalize_reasoning_to_english(parsed["reasoning"]),
             raw_response=raw,
         )
 
