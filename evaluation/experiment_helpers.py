@@ -338,6 +338,7 @@ def _metrics_to_rows(
                 "map": m.map_score,
                 "ndcg": m.ndcg,
                 "mean_rank": m.mean_rank,
+                "chunk_hit_rate": m.chunk_hit_rate,
                 "num_queries": m.num_queries,
             }
         )
