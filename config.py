@@ -51,7 +51,9 @@ EMBEDDING_MODELS: dict[str, str] = {
 }
 
 # Cross-encoder reranker model (used for reranking top-k retrieved results)
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# Upgraded from ms-marco-MiniLM-L-6-v2 (22M, web-search domain) to bge-reranker-v2-m3
+# (570M, multilingual, same BGE family as the primary embedding model).
+RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_MODEL_KEY = "bge-m3"
 
 # SPLADE sparse retriever
@@ -68,10 +70,6 @@ RETRIEVAL_MODES: list[str] = [
     "split_evidence_retrieval",
 ]
 DEFAULT_RETRIEVAL_MODE = "flat_baseline"
-
-# Cross-encoder reranker
-
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 # LLM (alignment classification) — open-source models
 
