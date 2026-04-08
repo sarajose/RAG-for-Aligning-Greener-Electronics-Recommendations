@@ -34,7 +34,7 @@ from config import (
     LLM_OFFLOAD_DIR,
 )
 from data_models import Chunk, ClassificationResult
-from rag.prompts import build_judge_messages
+from rag.prompts import build_judge_messages, build_judge_retry_messages
 
 logger = logging.getLogger(__name__)
 
@@ -56,28 +56,65 @@ class JudgeResult:
 
 
 def _parse_judge_response(raw: str) -> dict:
-    """Parse judge JSON output, with fallback."""
+    """Parse judge JSON output.
+
+    Tries three strategies in order:
+    1. Strict ``json.loads`` on the cleaned text.
+    2. Regex extraction of individual score fields from partial/malformed JSON.
+    3. Hard fallback (all scores = 1) when both above fail.
+    """
     text = raw.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
+    text = text.strip()
+
+    # Strategy 1: strict JSON
     try:
         data = json.loads(text)
+        label_s = int(data.get("label_score", 1))
+        just_s = int(data.get("justification_score", 1))
+        evid_s = int(data.get("evidence_score", 1))
         return {
-            "label_score": int(data.get("label_score", 1)),
-            "justification_score": int(data.get("justification_score", 1)),
-            "evidence_score": int(data.get("evidence_score", 1)),
-            "overall_score": float(data.get("overall_score", 1.0)),
-            "reasoning": data.get("reasoning", ""),
+            "label_score": label_s,
+            "justification_score": just_s,
+            "evidence_score": evid_s,
+            "overall_score": round((label_s + just_s + evid_s) / 3, 2),
+            "reasoning": str(data.get("reasoning", "")),
         }
     except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse judge JSON — assigning score 1")
+        pass
+
+    # Strategy 2: regex extraction from partial JSON
+    scores: dict[str, int] = {}
+    for field in ("label_score", "justification_score", "evidence_score"):
+        m = re.search(rf'"{field}"\s*:\s*([1-5])', text)
+        if m:
+            scores[field] = int(m.group(1))
+    reasoning_m = re.search(r'"reasoning"\s*:\s*"([^"]*)"', text)
+    reasoning = reasoning_m.group(1) if reasoning_m else ""
+
+    if len(scores) == 3:
+        label_s = scores["label_score"]
+        just_s = scores["justification_score"]
+        evid_s = scores["evidence_score"]
+        logger.warning("Judge JSON malformed — recovered scores via regex: %s", scores)
         return {
-            "label_score": 1,
-            "justification_score": 1,
-            "evidence_score": 1,
-            "overall_score": 1.0,
-            "reasoning": "PARSE_ERROR: Judge response was not valid JSON. Default scores were assigned.",
+            "label_score": label_s,
+            "justification_score": just_s,
+            "evidence_score": evid_s,
+            "overall_score": round((label_s + just_s + evid_s) / 3, 2),
+            "reasoning": reasoning or "Scores extracted from malformed JSON response.",
         }
+
+    # Strategy 3: hard fallback
+    logger.warning("Failed to parse judge JSON — assigning score 1. Raw: %.120s", text)
+    return {
+        "label_score": 1,
+        "justification_score": 1,
+        "evidence_score": 1,
+        "overall_score": 1.0,
+        "reasoning": "PARSE_ERROR: Judge response was not valid JSON. Default scores were assigned.",
+    }
 
 
 def _contains_cjk(text: str) -> bool:
@@ -187,10 +224,7 @@ class LLMJudge:
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-                temperature=1.0,
-                top_p=1.0,
-                top_k=50,
+                do_sample=False,   # greedy — deterministic and reproducible
             )
 
         new_tokens = outputs[0][inputs["input_ids"].shape[-1]:]
@@ -220,6 +254,16 @@ class LLMJudge:
         )
         raw = self._generate(messages)
         parsed = _parse_judge_response(raw)
+
+        # Retry once with a stripped-down prompt if primary parse failed completely
+        if parsed["reasoning"].startswith("PARSE_ERROR"):
+            logger.info("Judge parse failed — retrying with simplified prompt")
+            retry_messages = build_judge_retry_messages(
+                label=classification.label,
+                justification=classification.justification,
+            )
+            raw = self._generate(retry_messages)
+            parsed = _parse_judge_response(raw)
 
         return JudgeResult(
             recommendation=classification.recommendation,
