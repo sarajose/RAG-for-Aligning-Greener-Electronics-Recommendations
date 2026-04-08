@@ -40,7 +40,7 @@ from bs4 import BeautifulSoup, Tag
 # Conservative text budget to avoid model-side hard truncation for 512-token
 # encoders while still preserving enough legal context per chunk.
 APPROX_CHARS_PER_TOKEN = 4
-MAX_CHUNK_TOKENS = 450
+MAX_CHUNK_TOKENS = 600
 MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN
 MIN_BLOCK_CHARS = 40
 
