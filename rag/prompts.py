@@ -161,6 +161,37 @@ def build_classifier_messages(
     ]
 
 
+_JUDGE_RETRY_SYSTEM = """\
+You are a scoring assistant. Reply with ONLY a JSON object — no other text.
+
+Required format:
+{"label_score": <int 1-5>, "justification_score": <int 1-5>, "evidence_score": <int 1-5>, "overall_score": <float>, "reasoning": "<one English sentence>"}
+"""
+
+_JUDGE_RETRY_USER = """\
+Score the following AI classification on a 1-5 scale for each dimension.
+
+Label assigned: {label}
+Justification: {justification}
+
+Reply with JSON only.
+"""
+
+
+def build_judge_retry_messages(
+    label: str,
+    justification: str,
+) -> list[dict[str, str]]:
+    """Minimal fallback prompt used when the primary judge parse fails."""
+    return [
+        {"role": "system", "content": _JUDGE_RETRY_SYSTEM},
+        {"role": "user", "content": _JUDGE_RETRY_USER.format(
+            label=label,
+            justification=justification[:400],
+        )},
+    ]
+
+
 def build_judge_messages(
     recommendation: str,
     chunks: list[Chunk],
