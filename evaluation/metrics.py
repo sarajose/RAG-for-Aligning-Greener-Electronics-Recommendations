@@ -197,6 +197,7 @@ def compute_retrieval_metrics(
     all_retrieved: list[list[str]],
     all_relevant: list[set[str]],
     k: int,
+    chunk_hit_rate: float = 0.0,
 ) -> RetrievalMetrics:
     """Aggregate retrieval metrics over a set of queries.
 
@@ -242,6 +243,7 @@ def compute_retrieval_metrics(
         ndcg=float(np.mean(ndcgs)),
         num_queries=n,
         mean_rank=mean_r,
+        chunk_hit_rate=chunk_hit_rate,
     )
 
 
