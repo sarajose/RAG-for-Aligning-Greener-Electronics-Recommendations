@@ -132,12 +132,18 @@ def evaluate_retrieval(
 
     all_retrieved_docs: list[list[str]] = []
     all_relevant_docs: list[set[str]] = []
+    chunk_hits_top1: list[int] = []  # ceiling: top-1 raw chunk from correct doc
 
     for query in queries:
         try:
             result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
         except TypeError:
             result = retriever.retrieve(query, top_k=n_rerank)
+
+        relevant_docs = query_to_docs[query]
+        # Ceiling: is the very first chunk from the correct document?
+        top1_doc = normalise_doc_name(result.ranked_chunks[0].document) if result.ranked_chunks else ""
+        chunk_hits_top1.append(1 if top1_doc in relevant_docs else 0)
 
         seen: set[str] = set()
         doc_ranking: list[str] = []
@@ -148,10 +154,11 @@ def evaluate_retrieval(
                 doc_ranking.append(canon)
 
         all_retrieved_docs.append(doc_ranking)
-        all_relevant_docs.append(query_to_docs[query])
+        all_relevant_docs.append(relevant_docs)
 
+    chunk_hit_rate = float(sum(chunk_hits_top1) / len(chunk_hits_top1)) if chunk_hits_top1 else 0.0
     return {
-        k: compute_retrieval_metrics(all_retrieved_docs, all_relevant_docs, k)
+        k: compute_retrieval_metrics(all_retrieved_docs, all_relevant_docs, k, chunk_hit_rate=chunk_hit_rate)
         for k in sorted(set(k_values))
     }
 
