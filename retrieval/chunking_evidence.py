@@ -44,6 +44,12 @@ MAX_CHUNK_TOKENS = 450
 MAX_CHUNK_CHARS = MAX_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN
 MIN_BLOCK_CHARS = 40
 
+# Overlap between consecutive sub-chunks of the same paragraph/section.
+# ~80 tokens ensures that clause boundaries (e.g. "shall / except / where")
+# are not silently split across two retrieval units.
+CHUNK_OVERLAP_TOKENS = 80
+CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * APPROX_CHARS_PER_TOKEN
+
 # 1. LOADING & METADATA
 
 def load_html(path: Path) -> BeautifulSoup:
@@ -110,8 +116,34 @@ def tag_text(tag: Tag) -> str:
     return clean(tag.get_text())
 
 
-def split_text_for_embedding_budget(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
-    """Split long text into smaller chunks aligned to sentence boundaries."""
+def _tail_overlap(text: str, overlap_chars: int) -> str:
+    """Return the trailing ``overlap_chars`` characters snapped to a sentence start.
+
+    Avoids cutting in the middle of a word or sentence by scanning backwards for
+    a sentence boundary (period/exclamation/question followed by whitespace).
+    """
+    if overlap_chars <= 0 or len(text) <= overlap_chars:
+        return ""
+    tail = text[-overlap_chars:]
+    # Prefer to start overlap at a sentence boundary inside the tail window.
+    m = re.search(r"(?<=[.!?])\s+", tail)
+    if m:
+        tail = tail[m.end():]
+    return tail.strip()
+
+
+def split_text_for_embedding_budget(
+    text: str,
+    max_chars: int = MAX_CHUNK_CHARS,
+    overlap_chars: int = CHUNK_OVERLAP_CHARS,
+) -> list[str]:
+    """Split long text into sentence-aligned chunks with optional sliding overlap.
+
+    When ``overlap_chars > 0`` (default), each new sub-chunk begins with the
+    last *overlap_chars* characters of the previous sub-chunk (snapped to a
+    sentence boundary).  This prevents legal clauses that straddle a chunk
+    boundary from being silently dropped from both retrieval candidates.
+    """
     text = clean(text)
     if not text:
         return []
@@ -136,9 +168,12 @@ def split_text_for_embedding_budget(text: str, max_chars: int = MAX_CHUNK_CHARS)
                 else:
                     if piece:
                         chunks.append(piece)
-                    piece = word
+                        tail = _tail_overlap(piece, overlap_chars)
+                        piece = f"{tail} {word}".strip() if tail else word
+                    else:
+                        piece = word
             if piece:
-                chunks.append(piece)
+                current = piece  # feed into normal accumulation below
             continue
 
         candidate = f"{current} {sent}".strip()
@@ -147,7 +182,10 @@ def split_text_for_embedding_budget(text: str, max_chars: int = MAX_CHUNK_CHARS)
         else:
             if current:
                 chunks.append(current)
-            current = sent
+                tail = _tail_overlap(current, overlap_chars)
+                current = f"{tail} {sent}".strip() if tail else sent
+            else:
+                current = sent
 
     if current:
         chunks.append(current)
