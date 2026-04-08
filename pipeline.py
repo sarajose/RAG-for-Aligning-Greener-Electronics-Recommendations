@@ -24,6 +24,7 @@ from config import (
     EVIDENCE_CSV,
     OUTPUT_DIR,
     RETRIEVAL_MODES,
+    RRF_K,
     SPLADE_MAX_LENGTH,
     SPLADE_MODEL,
     WHITEPAPER_RECOMMENDATIONS_CSV,
@@ -108,6 +109,10 @@ def main() -> None:
     )
     p_eval.add_argument("--robust-model", default=None)
     p_eval.add_argument("--robust-k", type=int, default=10)
+    p_eval.add_argument(
+        "--rrf-k", type=int, default=RRF_K,
+        help="RRF smoothing constant for grid search ({10,30,60,100}); default: 60",
+    )
 
     # ── merge-eval ────────────────────────────────────────────────────────
     p_merge = sub.add_parser("merge-eval", help="Merge Kaggle/remote metrics CSV(s) into local unified outputs")

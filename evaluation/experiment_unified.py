@@ -104,6 +104,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             reranker=reranker,
             top_k=args.top_k,
             rerank_top=args.rerank_top,
+            rrf_k=getattr(args, "rrf_k", 60),
         )
 
         for method_name, retriever in retrievers.items():

@@ -55,11 +55,13 @@ class HybridRetriever(BaseRetriever):
         bm25: BM25Okapi,
         chunks: list[Chunk],
         embed_model: SentenceTransformer,
+        rrf_k: int = RRF_K,
     ) -> None:
         self.faiss_index = faiss_index
         self.bm25 = bm25
         self.chunks = chunks
         self.embed_model = embed_model
+        self.rrf_k = rrf_k
 
     @property
     def name(self) -> str:
@@ -90,6 +92,7 @@ class HybridRetriever(BaseRetriever):
         # Reciprocal Rank Fusion
         fused = reciprocal_rank_fusion(
             [bm25_idx.tolist(), dense_idx.tolist()],
+            k=self.rrf_k,
         )
         final = fused[:top_k]
 

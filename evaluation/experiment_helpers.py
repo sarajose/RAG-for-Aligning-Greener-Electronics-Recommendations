@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 from typing import Any, Iterable
 
-from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, INDEX_DIR
+from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, INDEX_DIR, RRF_K
 from data_models import Chunk
 from embedding_indexing import build_faiss_index, embed_texts, get_embed_model, load_indices, tokenize
 from evaluation.metrics import compute_retrieval_metrics
@@ -358,13 +358,14 @@ def _build_retrievers_for_model(
     reranker: Reranker | None,
     top_k: int,
     rerank_top: int,
+    rrf_k: int = RRF_K,
 ) -> dict[str, Any]:
     faiss_index, bm25_index, chunks = load_indices(model_key)
     embed_model = get_embed_model(model_key)
 
     bm25 = BM25Retriever(bm25_index, chunks)
     dense = DenseRetriever(faiss_index, chunks, embed_model)
-    hybrid = CompositeHybridRetriever(faiss_index, bm25_index, chunks, embed_model)
+    hybrid = CompositeHybridRetriever(faiss_index, bm25_index, chunks, embed_model, rrf_k=rrf_k)
 
     retrievers: dict[str, Any] = {
         "bm25": bm25,
