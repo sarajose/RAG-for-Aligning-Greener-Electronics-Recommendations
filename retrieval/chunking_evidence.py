@@ -473,6 +473,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
         paras = extract_paragraphs(art)
 
         if paras:
+            article_text = "\n\n".join(p["text"] for p in paras)
             for p in paras:
                 text = p["text"]
                 parts = split_text_for_embedding_budget(text)
@@ -492,6 +493,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
                         "paragraph": para,
                         "char_offset": 0,  # placeholder - full DOM traversal needed for precise offset
                         "text": part,
+                        "article_text": article_text,
                     })
         else:
             # Fallback: article has no parseable paragraphs
@@ -512,6 +514,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
                         "paragraph": para,
                         "char_offset": 0,
                         "text": part,
+                        "article_text": full,
                     })
 
     # Annexes
@@ -529,7 +532,7 @@ def parse_eurlex_html(path: Path) -> list[dict]:
 FIELDNAMES = [
     "id", "document", "source_file", "version",
     "chapter", "article", "article_subtitle",
-    "paragraph", "char_offset", "text",
+    "paragraph", "char_offset", "text", "article_text",
 ]
 
 

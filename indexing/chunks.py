@@ -42,6 +42,7 @@ def load_chunks(csv_path: Path) -> list[Chunk]:
                     paragraph=row.get("paragraph", ""),
                     char_offset=int(row["char_offset"]) if row.get("char_offset") else 0,
                     text=text,
+                    article_text=row.get("article_text", ""),
                 )
             )
     return chunks
