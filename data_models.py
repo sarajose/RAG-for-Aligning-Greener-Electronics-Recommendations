@@ -192,6 +192,7 @@ class RetrievalMetrics:
     ndcg: float                 # Normalised Discounted Cumulative Gain
     num_queries: int
     mean_rank: float = float("inf")  # mean rank of first relevant item
+    chunk_hit_rate: float = 0.0      # fraction of queries where top-1 raw chunk is from correct doc (ceiling proxy)
 
 
 @dataclass
