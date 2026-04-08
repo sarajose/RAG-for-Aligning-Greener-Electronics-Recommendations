@@ -38,7 +38,11 @@ class Chunk:
     char_offset : int
         Character offset in the source file (approximate).
     text : str
-        Full provision text.
+        Full provision text (the retrieval unit — one paragraph or split).
+    article_text : str
+        Full concatenated text of every paragraph in the parent article.
+        Used as the generation context (parent-child chunking pattern).
+        Empty string for chunks loaded from older CSVs without this column.
     """
 
     id: str
@@ -51,6 +55,7 @@ class Chunk:
     paragraph: str
     char_offset: int
     text: str
+    article_text: str = field(default="")
 
     def to_dict(self) -> dict:
         """Convert to a plain dictionary."""
