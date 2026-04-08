@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 from typing import BinaryIO
@@ -7,6 +8,8 @@ from typing import BinaryIO
 import faiss
 import numpy as np
 from rank_bm25 import BM25Okapi
+
+logger = logging.getLogger(__name__)
 
 from config import (
     DEFAULT_MODEL_KEY,
@@ -34,9 +37,65 @@ def build_faiss_index(embeddings: np.ndarray, use_hnsw: bool = True) -> faiss.In
     return index
 
 
+# ── BM25 tokenizer with NLTK stopwords + Porter stemming ────────────────────
+# Lazy-initialised so the import cost is only paid on first use.
+_BM25_STOPWORDS: frozenset | None = None
+_BM25_STEMMER = None
+
+
+def _init_bm25_tools() -> tuple:
+    """Lazy-load NLTK stopwords and Porter stemmer (once per process)."""
+    global _BM25_STOPWORDS, _BM25_STEMMER
+    if _BM25_STOPWORDS is not None:
+        return _BM25_STOPWORDS, _BM25_STEMMER
+    try:
+        import nltk
+        from nltk.corpus import stopwords as sw
+        from nltk.stem import PorterStemmer
+
+        try:
+            words = sw.words("english")
+        except LookupError:
+            nltk.download("stopwords", quiet=True)
+            words = sw.words("english")
+
+        _BM25_STOPWORDS = frozenset(words)
+        _BM25_STEMMER = PorterStemmer()
+        logger.info("BM25 tokenizer: NLTK stopwords (%d) + Porter stemmer loaded",
+                    len(_BM25_STOPWORDS))
+    except ImportError:
+        logger.warning(
+            "nltk not installed — BM25 will use whitespace-only tokenisation. "
+            "Install with: pip install nltk"
+        )
+        _BM25_STOPWORDS = frozenset()
+        _BM25_STEMMER = None
+    return _BM25_STOPWORDS, _BM25_STEMMER
+
+
 def tokenize(text: str) -> list[str]:
-    """Basic whitespace tokenizer for BM25."""
-    return text.lower().split()
+    """Tokenize text for BM25 with stopword removal and Porter stemming.
+
+    Stopword removal reduces noise from high-frequency function words
+    (the, of, in, …) that appear in every legal provision.  Porter stemming
+    groups morphological variants (recycling/recycled/recyclable) so BM25
+    can match across inflected forms.  Legal normative terms (shall, may,
+    must) are intentionally kept — they are not in NLTK's English stopwords.
+    """
+    stopwords, stemmer = _init_bm25_tools()
+    tokens = text.lower().split()
+    result: list[str] = []
+    for tok in tokens:
+        tok = tok.strip(".,;:\"'()[]")  # strip trailing punctuation
+        if len(tok) < 2:
+            continue
+        if tok in stopwords:
+            continue
+        if stemmer is not None:
+            tok = stemmer.stem(tok)
+        if tok:
+            result.append(tok)
+    return result
 
 
 def build_bm25_index(texts: list[str]) -> BM25Okapi:
