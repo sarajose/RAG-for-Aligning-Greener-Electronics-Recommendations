@@ -54,6 +54,27 @@ RULES
 • If none of the chunks are relevant, choose "No explicit legal basis".
 • Always cite at least one chunk_id when a legal basis exists.
 • Keep the justification concise and factual.
+
+EXAMPLES
+────────
+Example 1 — Aligned
+Recommendation: "Electrical and electronic equipment placed on the market must not
+contain lead, mercury, cadmium, hexavalent chromium, PBB or PBDE above the maximum
+concentration values."
+Output:
+{"label": "Aligned", "justification": "Article 4(1) of the RoHS Directive (2011/65/EU) directly prohibits placing EEE on the market that contains restricted substances exceeding the maximum concentration values listed in Annex II. The recommendation maps precisely to this binding obligation.", "cited_chunk_ids": ["<chunk_id>"]}
+
+Example 2 — No explicit legal basis
+Recommendation: "Manufacturers should publish annual material composition reports broken
+down by product line, including the percentage weight of each polymer type used."
+Output:
+{"label": "No explicit legal basis", "justification": "None of the retrieved provisions require product-line-level annual polymer composition reporting. ESPR and CSRD address reporting at a higher level of aggregation and do not mandate this specific granularity. No chunk provides explicit grounding for this obligation.", "cited_chunk_ids": []}
+
+Example 3 — Beyond compliance
+Recommendation: "All new consumer electronics should contain a minimum of 50% post-consumer
+recycled plastic in their casings."
+Output:
+{"label": "Beyond compliance", "justification": "ESPR (Regulation 2024/1781) enables delegated acts to impose recycled content requirements, but no adopted delegated act currently mandates a 50% post-consumer recycled plastic threshold for consumer electronics casings. The recommendation exceeds what current binding obligations require.", "cited_chunk_ids": ["<chunk_id>"]}
 """
 
 CLASSIFIER_USER_TEMPLATE = """\
@@ -132,7 +153,12 @@ Evaluate the classification and respond with the JSON object only.
 
 # FORMATTING HELPERS
 def format_evidence_block(chunks: list[Chunk]) -> str:
-    """Format retrieved chunks into a numbered evidence block."""
+    """Format retrieved chunks into a numbered evidence block.
+
+    When a chunk carries ``article_text`` (parent-child chunking), the full
+    article text is shown instead of the short paragraph so the classifier
+    receives richer generation context.
+    """
     parts: list[str] = []
     for i, c in enumerate(chunks, 1):
         header = f"[{i}] id={c.id} | {c.document} | {c.article}"
@@ -140,7 +166,8 @@ def format_evidence_block(chunks: list[Chunk]) -> str:
             header += f" — {c.article_subtitle}"
         if c.paragraph:
             header += f" | §{c.paragraph}"
-        parts.append(f"{header}\n{c.text}\n")
+        body = c.article_text if c.article_text else c.text
+        parts.append(f"{header}\n{body}\n")
     return "\n".join(parts)
 
 
