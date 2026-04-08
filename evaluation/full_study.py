@@ -351,6 +351,8 @@ def run_prompt_study(args: argparse.Namespace) -> None:
         "num_rows": int(len(prompt_df)),
         "num_non_empty_labels": int((prompt_df["alignment_label"] != "").sum()),
         "num_human_labels": int((prompt_df["human_label"] != "").sum()),
+        "judge_csv_input": str(judge_csv) if judge_csv is not None else None,
+        "judge_csv_exists": bool(judge_csv.exists()) if judge_csv is not None else False,
     }
 
     eval_mask = (prompt_df["alignment_label"] != "") & (prompt_df["human_label"] != "")
@@ -382,6 +384,10 @@ def run_prompt_study(args: argparse.Namespace) -> None:
         judge_df["overall_band"].value_counts(dropna=False).rename_axis("overall_band").reset_index(
             name="count"
         ).to_csv(out_dir / "judge_overall_band_distribution.csv", index=False)
+    elif judge_csv is not None:
+        print(f"[warn] --judge-csv was provided but file does not exist: {judge_csv}")
+        print("[warn] prompt-study does not generate a raw judge CSV; pass an existing one from `main.py prompt --judge`.")
+        report["judge_summary_warning"] = "judge_csv_not_found"
 
     summary_json = out_dir / "thesis_prompt_study_summary.json"
     summary_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
