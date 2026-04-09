@@ -74,11 +74,11 @@ python main.py prompt `
 python main.py prompt --retrieve-only --model bge-m3
 ```
 
-**Compare classifiers** (Qwen2.5-3B vs Mistral-7B):
+**Compare classifiers** (Qwen2.5-7B vs Mistral-7B):
 
 ```python
 from rag.classifier import AlignmentClassifier
-clf_qwen    = AlignmentClassifier(model_key="qwen")    # default
+clf_qwen    = AlignmentClassifier(model_key="qwen")    # default (7B)
 clf_mistral = AlignmentClassifier(model_key="mistral") # for comparison
 ```
 
@@ -249,6 +249,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--auto-build-indices` | off | Build missing indices automatically |
 | `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV used for auto-build |
 | `--include-splade` | off | Include SPLADE sparse baseline |
+| `--include-colbert` | off | Include BGE-M3 ColBERT multi-vector baseline (requires FlagEmbedding) |
 | `--splade-model` | default in `config.py` | SPLADE model id |
 | `--splade-max-length` | default in `config.py` | SPLADE max token length |
 | `--remote-eval-csv` | none | Kaggle/remote `metrics_all.csv` path(s) to merge after local eval |
@@ -256,6 +257,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--with-robustness` | off | Run ablation significance tests |
 | `--robust-model` | first model in `--models` | Model used for robustness stage |
 | `--robust-k` | `10` | K used for robustness stage |
+| `--rrf-k` | `60` | RRF smoothing constant for grid search (e.g. 10, 30, 60, 100) |
 
 ### `merge-eval`
 | Argument | Default | Description |
@@ -307,7 +309,7 @@ Three complementary evaluation signals are produced in a single run:
 
 Ablation configurations compared per model: `bm25`, `dense`, `rrf`, `bm25_rerank`, `dense_rerank`, `rrf_rerank`.
 
-Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG@k, Mean Rank.
+Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG@k, Mean Rank, Chunk Hit Rate (ceiling proxy).
 
 With `--with-robustness`: bootstrap 95% CI and paired permutation tests with significance stars.
 
@@ -321,11 +323,10 @@ With `--with-robustness`: bootstrap 95% CI and paired permutation tests with sig
 - `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
 
 **LLM classifiers**:
-- `qwen` → `Qwen/Qwen2.5-3B-Instruct` (default)
+- `qwen` → `Qwen/Qwen2.5-7B-Instruct` (default)
 - `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (comparison baseline)
 
-**Reranker**: `cross-encoder/ms-marco-MiniLM-L-6-v2`
-
+**Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
 ---
 
 ## File structure
