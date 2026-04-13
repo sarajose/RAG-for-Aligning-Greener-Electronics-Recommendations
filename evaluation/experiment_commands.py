@@ -121,6 +121,3 @@ def cmd_download_models(args: argparse.Namespace) -> None:
             AutoModelForCausalLM.from_pretrained(model_name)
 
     print("[download] Completed.")
-
-
-
