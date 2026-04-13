@@ -66,6 +66,11 @@ def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
     return default
 
 
+def _normalize_ws(text: str) -> str:
+    """Normalize whitespace for stable gold-query grouping keys."""
+    return " ".join((text or "").strip().split())
+
+
 def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardEntry]:
     """Load gold-standard entries from CSV with tolerant column handling."""
     entries: list[GoldStandardEntry] = []
@@ -96,16 +101,41 @@ def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardE
     return entries
 
 
-def group_gold_by_query(entries: list[GoldStandardEntry]) -> dict[str, set[str]]:
-    """Group gold labels into {query: {canonical document names}}."""
+def group_gold_query_instances(entries: list[GoldStandardEntry]) -> list[dict[str, Any]]:
+    """Group gold labels by query instance.
+
+    Query instances are keyed by (recommendation_text, source_snippet_original).
+    This preserves cases where one recommendation text is reused in different
+    contexts while still merging duplicated rows that point to multiple
+    relevant documents for the same recommendation/snippet pair.
+    """
     from config import normalise_doc_name
 
-    grouped: dict[str, set[str]] = defaultdict(set)
+    grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
     for e in entries:
-        query = (e.recommendation_text or "").strip()
+        query = _normalize_ws(e.recommendation_text)
         if not query:
             continue
-        grouped[query].add(normalise_doc_name(e.doc_short_name))
+        snippet = _normalize_ws(e.source_snippet_original)
+        grouped[(query, snippet)].add(normalise_doc_name(e.doc_short_name))
+
+    instances: list[dict[str, Any]] = []
+    for (query, snippet), relevant_docs in sorted(grouped.items(), key=lambda x: x[0]):
+        instances.append(
+            {
+                "query": query,
+                "source_snippet_original": snippet,
+                "relevant_docs": set(relevant_docs),
+            }
+        )
+    return instances
+
+
+def group_gold_by_query(entries: list[GoldStandardEntry]) -> dict[str, set[str]]:
+    """Legacy grouping helper: collapse query instances by recommendation text only."""
+    grouped: dict[str, set[str]] = defaultdict(set)
+    for item in group_gold_query_instances(entries):
+        grouped[item["query"]].update(item["relevant_docs"])
     return dict(grouped)
 
 
@@ -123,8 +153,7 @@ def evaluate_retrieval(
         k_values = EVAL_K_VALUES
 
     entries = load_gold_standard(gold_path)
-    query_to_docs = group_gold_by_query(entries)
-    queries = sorted(query_to_docs.keys())
+    query_instances = group_gold_query_instances(entries)
 
     max_k = max(k_values)
     n_retrieve = max(max_k * 3, top_k_retrieve, 30)
@@ -134,13 +163,14 @@ def evaluate_retrieval(
     all_relevant_docs: list[set[str]] = []
     chunk_hits_top1: list[int] = []  # ceiling: top-1 raw chunk from correct doc
 
-    for query in queries:
+    for item in query_instances:
+        query = item["query"]
         try:
             result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
         except TypeError:
             result = retriever.retrieve(query, top_k=n_rerank)
 
-        relevant_docs = query_to_docs[query]
+        relevant_docs = item["relevant_docs"]
         # Ceiling: is the very first chunk from the correct document?
         top1_doc = normalise_doc_name(result.ranked_chunks[0].document) if result.ranked_chunks else ""
         chunk_hits_top1.append(1 if top1_doc in relevant_docs else 0)
@@ -175,8 +205,7 @@ def per_query_retrieval_scores(
     from config import normalise_doc_name
 
     entries = load_gold_standard(gold_path)
-    query_to_docs = group_gold_by_query(entries)
-    queries = sorted(query_to_docs.keys())
+    query_instances = group_gold_query_instances(entries)
 
     n_retrieve = max(k * 3, top_k_retrieve, 30)
     n_rerank = max(k, rerank_top)
@@ -185,13 +214,14 @@ def per_query_retrieval_scores(
         m: [] for m in ("hit", "recall", "precision", "mrr", "ap", "ndcg", "rank")
     }
 
-    for query in queries:
+    for item in query_instances:
+        query = item["query"]
         try:
             result = retriever.retrieve(query, top_k=n_retrieve, rerank_top=n_rerank)
         except TypeError:
             result = retriever.retrieve(query, top_k=n_rerank)
 
-        relevant = query_to_docs[query]
+        relevant = item["relevant_docs"]
 
         if level == "document":
             seen: set[str] = set()

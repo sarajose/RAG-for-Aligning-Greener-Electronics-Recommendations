@@ -185,7 +185,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 metrics_rows.extend(
                     _metrics_to_rows(
                         mteb_metrics,
-                        dataset="mteb_legalbench",
+                        dataset="mteb_legal",
                         level="chunk",
                         model_key=model_key,
                         method=mteb_method,

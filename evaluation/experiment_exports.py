@@ -8,7 +8,11 @@ from typing import Any
 import pandas as pd
 
 from config import normalise_doc_name
-from evaluation.evaluation import group_gold_by_query, load_gold_standard, load_whitepaper_recommendations
+from evaluation.evaluation import (
+    group_gold_query_instances,
+    load_gold_standard,
+    load_whitepaper_recommendations,
+)
 from evaluation.experiment_helpers import _safe_retrieve
 
 
@@ -21,20 +25,22 @@ def export_gold_retrieved_chunks(
     out_csv: Path,
     top_k: int,
 ) -> None:
-    query_to_docs = group_gold_by_query(load_gold_standard(gold_csv))
+    query_instances = group_gold_query_instances(load_gold_standard(gold_csv))
     rows: list[dict[str, Any]] = []
-    queries = list(query_to_docs.keys())
-    for i, query in enumerate(queries, start=1):
+    for i, item in enumerate(query_instances, start=1):
+        query = item["query"]
         result = _safe_retrieve(retriever, query, top_k=top_k)
-        if i % 50 == 0 or i == len(queries):
-            print(f"[gold] {i}/{len(queries)} queries processed for {model_key}|{method}")
+        if i % 50 == 0 or i == len(query_instances):
+            print(f"[gold] {i}/{len(query_instances)} queries processed for {model_key}|{method}")
         for rank, (chunk, score) in enumerate(zip(result.ranked_chunks[:top_k], result.scores[:top_k]), start=1):
             rows.append(
                 {
                     "dataset": "gold_standard",
                     "model_key": model_key,
                     "method": method,
+                    "query_instance_id": i,
                     "query": query,
+                    "source_snippet_original": item.get("source_snippet_original", ""),
                     "rank": rank,
                     "score": float(score),
                     "chunk_id": chunk.id,

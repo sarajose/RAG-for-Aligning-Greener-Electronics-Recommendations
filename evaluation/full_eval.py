@@ -45,7 +45,7 @@ def collect_per_query_scores(
     """Collect per-query retrieval scores for all ablation methods."""
     from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, EMBEDDING_MODELS
     from embedding_indexing import get_embed_model, load_indices
-    from evaluation.evaluation import load_gold_standard, group_gold_by_query, per_query_retrieval_scores
+    from evaluation.evaluation import load_gold_standard, group_gold_query_instances, per_query_retrieval_scores
     from retrieval.bm25_retriever import BM25Retriever
     from retrieval.dense_retriever import DenseRetriever
     from retrieval.hybrid_retriever import HybridRetriever as CompositeHybridRetriever
@@ -57,8 +57,8 @@ def collect_per_query_scores(
     reranker = None if skip_reranker else Reranker()
 
     entries = load_gold_standard(gold_csv)
-    query_to_docs = group_gold_by_query(entries)
-    queries = sorted(query_to_docs.keys())
+    query_instances = group_gold_query_instances(entries)
+    queries = [item["query"] for item in query_instances]
 
     top_k = max(k * 3, DEFAULT_TOP_K, 30)
     rerank_top = max(k, DEFAULT_RERANK_TOP)

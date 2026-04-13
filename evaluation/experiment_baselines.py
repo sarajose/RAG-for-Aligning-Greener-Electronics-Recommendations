@@ -131,7 +131,7 @@ def _run_splade_eval(
             metrics_rows.extend(
                 _metrics_to_rows(
                     mteb_metrics,
-                    dataset="mteb_legalbench",
+                    dataset="mteb_legal",
                     level="chunk",
                     model_key="splade",
                     method=mteb_method,

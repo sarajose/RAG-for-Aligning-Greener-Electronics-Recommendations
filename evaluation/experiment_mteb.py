@@ -87,7 +87,7 @@ def _build_mteb_chunks(corpus_ds, max_corpus: int | None) -> tuple[list[Chunk], 
     for i, row in enumerate(corpus_ds):
         if max_corpus is not None and i >= max_corpus:
             break
-        doc_id = str(row.get("_id", f"doc_{i}"))
+        doc_id = str(row.get("_id") or row.get("id") or f"doc_{i}")
         title = (row.get("title") or "").strip()
         text = (row.get("text") or "").strip()
         merged = f"{title}\n{text}".strip()
@@ -96,8 +96,8 @@ def _build_mteb_chunks(corpus_ds, max_corpus: int | None) -> tuple[list[Chunk], 
         chunks.append(
             Chunk(
                 id=doc_id,
-                document="MTEB-LegalBench",
-                source_file="mteb_legalbench",
+                document="MTEB-Legal",
+                source_file="mteb_legal",
                 version="v1",
                 chapter="",
                 article="",
@@ -115,13 +115,13 @@ def _load_mteb_queries_qrels(
     dataset_id: str,
     split_name: str,
 ) -> tuple[dict[str, str], dict[str, set[str]]]:
-    queries_ds = _load_split(dataset_id, "queries", "queries")
-    qrels_ds = _load_split(dataset_id, "qrels", split_name)
+    queries_ds = _load_split(dataset_id, "en-queries", "test")
+    qrels_ds = _load_split(dataset_id, "en-qrels", split_name)
 
     queries: dict[str, str] = {}
     duplicate_query_ids: set[str] = set()
     for row in queries_ds:
-        qid = str(row.get("_id", "")).strip()
+        qid = str(row.get("_id") or row.get("id") or "").strip()
         text = str(row.get("text", "")).strip()
         if not qid or not text:
             continue
@@ -165,7 +165,7 @@ def _evaluate_mteb_chunk_level(
         f"START eval: model={model_key}, method={method}, dataset={dataset_id}, split={split_name}"
     )
     _log_progress("Loading corpus split...")
-    corpus_ds = _load_split(dataset_id, "corpus", "corpus")
+    corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building in-memory chunks from corpus...")
     chunks, _ = _build_mteb_chunks(corpus_ds, max_corpus)
     _log_progress(f"Corpus prepared with {len(chunks)} chunks.")
@@ -220,7 +220,7 @@ def _evaluate_mteb_chunk_level(
             ):
                 rows.append(
                     {
-                        "dataset": "mteb_legalbench",
+                        "dataset": "mteb_legal",
                         "model_key": model_key,
                         "method": method,
                         "query_id": qid,
@@ -260,7 +260,7 @@ def _build_mteb_retriever(
 
     _log_progress(f"Preparing hybrid retriever for model={model_key}, dataset={dataset_id}")
     _log_progress("Loading corpus split for retriever build...")
-    corpus_ds = _load_split(dataset_id, "corpus", "corpus")
+    corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building MTEB chunks/texts for retriever build...")
     chunks, texts = _build_mteb_chunks(corpus_ds, max_corpus)
     _log_progress(f"Tokenizing and building BM25 over {len(texts)} texts...")
@@ -297,7 +297,7 @@ def _build_mteb_splade_retriever(
 ):
     _log_progress(f"Preparing SPLADE retriever for dataset={dataset_id}, model={model_name}")
     _log_progress("Loading corpus split for SPLADE retriever...")
-    corpus_ds = _load_split(dataset_id, "corpus", "corpus")
+    corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building MTEB chunks for SPLADE retriever...")
     chunks, _ = _build_mteb_chunks(corpus_ds, max_corpus)
     _log_progress(f"Building SPLADE index for {len(chunks)} chunks (this can take a while)...")

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from config import INDEX_DIR
-from evaluation.evaluation import group_gold_by_query, load_gold_standard, per_query_retrieval_scores
+from evaluation.evaluation import group_gold_query_instances, load_gold_standard, per_query_retrieval_scores
 from evaluation.metrics import bootstrap_ci, paired_permutation_test
 from evaluation.experiment_helpers import (
     _build_retrievers_for_model,
@@ -37,12 +37,14 @@ def _error_categories(
     rerank_top: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     entries = load_gold_standard(gold_csv)
-    query_to_docs = group_gold_by_query(entries)
+    query_instances = group_gold_query_instances(entries)
 
     rows: list[dict[str, Any]] = []
     max_probe = max(20, top_k)
 
-    for query, relevant in query_to_docs.items():
+    for item in query_instances:
+        query = item["query"]
+        relevant = item["relevant_docs"]
         try:
             result = retriever.retrieve(query, top_k=max_probe * 3, rerank_top=max_probe)
         except TypeError:
@@ -73,6 +75,7 @@ def _error_categories(
         rows.append(
             {
                 "query": query,
+                "source_snippet_original": item.get("source_snippet_original", ""),
                 "relevant_docs": "; ".join(sorted(rel)),
                 "retrieved_top10_docs": "; ".join(seen[:10]),
                 "category": category,
@@ -118,7 +121,8 @@ def cmd_robustness(args: argparse.Namespace) -> None:
         reranker=reranker,
     )
 
-    gold_queries = sorted(group_gold_by_query(load_gold_standard(args.gold_csv)).keys())
+    gold_query_instances = group_gold_query_instances(load_gold_standard(args.gold_csv))
+    gold_queries = [item["query"] for item in gold_query_instances]
 
     per_query_long_rows: list[dict[str, Any]] = []
     ci_rows: list[dict[str, Any]] = []

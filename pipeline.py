@@ -81,7 +81,7 @@ def main() -> None:
     p_eval.add_argument("--k-values", type=int, nargs="+", default=EVAL_K_VALUES)
     p_eval.add_argument(
         "--mteb-dataset",
-        default="mteb/legalbench_consumer_contracts_qa",
+        default="mteb/MuPLeR-retrieval",
         help="MTEB dataset HF id or a local dataset directory saved with datasets.load_from_disk.",
     )
     p_eval.add_argument("--mteb-split", default="test")
