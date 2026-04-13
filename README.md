@@ -332,36 +332,51 @@ With `--with-robustness`: bootstrap 95% CI and paired permutation tests with sig
 ## File structure
 
 ```
-main.py                        top-level CLI entry point
-pipeline.py                    argparse CLI definitions
-pipeline_commands.py           command implementations
-pipeline_io.py                 I/O helpers (load/save CSV)
-config.py                      all paths, model IDs, hyperparameters
-data_models.py                 shared dataclasses (Chunk, Recommendation, ...)
+main.py                          top-level CLI entry point
+pipeline.py                      argparse CLI definitions
+pipeline_commands.py             command implementations
+pipeline_io.py                   I/O helpers (load/save CSV)
+config.py                        all paths, model IDs, hyperparameters
+data_models.py                   shared dataclasses (Chunk, Recommendation, ...)
+embedding_indexing.py            embed_texts, build_faiss_index, load_indices (facade)
 
 retrieval/
-  retrieval.py                 HybridRetriever (BM25 + FAISS + RRF + reranker)
-                               + BM25Retriever, DenseRetriever for ablation
-  reranker.py                  Reranker, RerankedRetriever (cross-encoder)
-  chunking_evidence.py         EUR-Lex HTML → structured CSV chunks
-  chunking_recommendations.py  Recommendation CSV loader
+  retrieval.py                   HybridRetriever (BM25 + FAISS + RRF + reranker)
+  hybrid_retriever.py            lightweight HybridRetriever for ablation evaluation
+  bm25_retriever.py              BM25Retriever baseline
+  dense_retriever.py             DenseRetriever baseline
+  reranker.py                    Reranker, RerankedRetriever (cross-encoder)
+  splade_retriever.py            SPLADE sparse baseline
+  colbert_retriever.py           ColBERT multi-vector baseline
+  base_retriever.py              BaseRetriever interface
+  chunking_evidence.py           EUR-Lex HTML → structured CSV chunks
+  chunking_recommendations.py    Recommendation CSV loader
 
 indexing/
-  embeddings.py                embed_texts, get_embed_model
-  indices.py                   build_faiss_index, build_bm25_index, load_indices
-  chunks.py                    load_chunks, load_and_merge_chunks
+  embeddings.py                  embed_texts, get_embed_model
+  indices.py                     build_faiss_index, build_bm25_index, load_indices
+  chunks.py                      load_chunks, load_and_merge_chunks
 
 evaluation/
-  evaluate.py                  unified evaluation (gold + projected + MTEB + ablation)
-  full_study.py                thesis full-study CLI (retrieval-study, prompt-study, k-compare)
-  metrics.py                   Hit@k, Recall, MRR, NDCG, bootstrap CI, ...
+  experiment_unified.py          unified evaluation orchestrator (gold + MTEB + ablation)
+  experiment_helpers.py          shared stats/metrics/retriever-building helpers
+  experiment_mteb.py             MTEB dataset loading and chunk-level evaluation
+  experiment_baselines.py        SPLADE and ColBERT baseline evaluation helpers
+  experiment_robustness.py       robustness analysis (bootstrap CI, permutation tests)
+  experiment_exports.py          chunk export helpers
+  experiment_commands.py         thin CLI entrypoints (merge-eval, download-models)
+  full_study.py                  thesis full-study CLI (retrieval-study, prompt-study, k-compare)
+  evaluation.py                  core evaluation logic (gold standard loader, per-query scoring)
+  full_eval.py                   ablation table, significance markers, report formatting
+  metrics.py                     Hit@k, Recall, MRR, NDCG, bootstrap CI, permutation test
 
 rag/
-  classifier.py                AlignmentClassifier (Qwen / Mistral)
-  llm_judge.py                 LLMJudge (LLM-as-judge evaluation)
-  prompts.py                   prompt templates
+  classifier.py                  AlignmentClassifier (Qwen / Mistral)
+  llm_judge.py                   LLMJudge (LLM-as-judge evaluation)
+  prompts.py                     prompt templates
 
-notebooks/                     analysis and visualisation
-outputs/                       generated artifacts (indices, results, eval)
-data/                          evidence HTML, gold standard, recommendations
+notebooks/                       analysis and visualisation
+outputs/                         generated artifacts (indices, results, eval)
+data/                            evidence HTML, gold standard, recommendations
+docs/                            CLI reference and pipeline walkthroughs
 ```
