@@ -159,6 +159,9 @@ def split_text_for_embedding_budget(
 
     for sent in sentences:
         if len(sent) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
             words = sent.split()
             piece = ""
             for word in words:
@@ -473,7 +476,8 @@ def parse_eurlex_html(path: Path) -> list[dict]:
         paras = extract_paragraphs(art)
 
         if paras:
-            article_text = "\n\n".join(p["text"] for p in paras)
+            # Keep article-level context on one physical CSV line per row.
+            article_text = " ".join(p["text"] for p in paras)
             for p in paras:
                 text = p["text"]
                 parts = split_text_for_embedding_budget(text)
