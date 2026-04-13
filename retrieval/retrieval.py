@@ -57,24 +57,7 @@ def search_faiss(
     query_embedding: np.ndarray,
     k: int = DEFAULT_TOP_K,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Query the FAISS dense-vector index.
-
-    Parameters
-    ----------
-    index : faiss.Index
-        Pre-built FAISS index.
-    query_embedding : np.ndarray
-        ``(1, D)`` query vector (L2-normalised).
-    k : int
-        Number of nearest neighbours.
-
-    Returns
-    -------
-    scores : np.ndarray
-        Shape ``(k,)`` cosine similarities.
-    indices : np.ndarray
-        Shape ``(k,)`` chunk-list positions.
-    """
+    """Search a FAISS index; return (scores, indices) arrays of length k."""
     scores, indices = index.search(query_embedding.astype(np.float32), k)
     return scores[0], indices[0]
 
@@ -84,24 +67,7 @@ def search_bm25(
     query: str,
     k: int = DEFAULT_TOP_K,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Query the BM25 sparse-lexical index.
-
-    Parameters
-    ----------
-    bm25 : BM25Okapi
-        Pre-built BM25 index.
-    query : str
-        Free-text query string.
-    k : int
-        Number of results.
-
-    Returns
-    -------
-    scores : np.ndarray
-        Shape ``(k,)`` BM25 relevance scores.
-    indices : np.ndarray
-        Shape ``(k,)`` chunk-list positions.
-    """
+    """Search a BM25Okapi index; return (scores, indices) arrays of length k."""
     tokens = tokenize(query)
     scores = bm25.get_scores(tokens)
     top_idx = np.argsort(scores)[::-1][:k]

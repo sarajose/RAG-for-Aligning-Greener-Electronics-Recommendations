@@ -19,31 +19,7 @@ from embedding_indexing import (
     tokenize,
 )
 from retrieval.base_retriever import BaseRetriever
-
-
-def reciprocal_rank_fusion(
-    ranked_lists: list[list[int]],
-    k: int = RRF_K,
-) -> list[tuple[int, float]]:
-    """Fuse multiple ranked lists using RRF.
-
-    Parameters
-    ----------
-    ranked_lists : list[list[int]]
-        Each inner list contains chunk indices ordered by relevance.
-    k : int
-        Smoothing constant (default 60).
-
-    Returns
-    -------
-    list[tuple[int, float]]
-        ``(chunk_index, fused_score)`` sorted descending.
-    """
-    fused: dict[int, float] = {}
-    for rlist in ranked_lists:
-        for rank, idx in enumerate(rlist, start=1):
-            fused[idx] = fused.get(idx, 0.0) + 1.0 / (k + rank)
-    return sorted(fused.items(), key=lambda x: x[1], reverse=True)
+from retrieval.retrieval import reciprocal_rank_fusion
 
 
 class HybridRetriever(BaseRetriever):
