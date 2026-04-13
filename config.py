@@ -81,8 +81,7 @@ LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
 JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
 LLM_GPU_MAX_MEMORY = "8GiB"
 LLM_CPU_MAX_MEMORY = "24GiB"
-#LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"  # C: drive version
-LLM_OFFLOAD_DIR = Path("D:/outputs/offload")  # D: drive for offload
+LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"
 LLM_OFFLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Alignment labels (to be denfined, just as a placeholder)
