@@ -38,6 +38,22 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
     if args.force_cpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        cuda_count = int(torch.cuda.device_count()) if cuda_available else 0
+        if args.force_cpu:
+            print("[setup] force_cpu=True; CUDA disabled for this run.")
+        else:
+            if cuda_available:
+                device_name = torch.cuda.get_device_name(0)
+                print(f"[setup] CUDA available: True (count={cuda_count}) | using GPU: {device_name}")
+            else:
+                print("[setup] CUDA available: False | running on CPU.")
+    except Exception as exc:
+        print(f"[setup] Could not probe CUDA status: {exc}")
+
     mteb_embed_batch_size = max(1, int(getattr(args, "mteb_embed_batch_size", 32)))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

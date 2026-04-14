@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+import faiss
 
-from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K
+from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, OUTPUT_DIR
 from data_models import Chunk
 from embedding_indexing import build_faiss_index, embed_texts, get_embed_model, tokenize
 from evaluation.experiment_helpers import _log_progress, _safe_retrieve, _ts
@@ -17,6 +20,42 @@ from evaluation.metrics import compute_retrieval_metrics
 from retrieval.reranker import RerankedRetriever, Reranker
 from retrieval.retrieval import HybridRetriever
 from retrieval.splade_retriever import SPLADERetriever
+
+
+def _mteb_cache_paths(
+    *,
+    model_key: str,
+    dataset_id: str,
+    max_corpus: int | None,
+) -> tuple[Path, Path, Path]:
+    """Return deterministic cache paths for MTEB dense artifacts."""
+    cache_root = OUTPUT_DIR / "mteb_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "model_key": model_key,
+        "dataset_id": str(dataset_id),
+        "max_corpus": max_corpus,
+    }
+    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    stem = f"{model_key}_{digest}"
+    return (
+        cache_root / f"{stem}_embeddings.npy",
+        cache_root / f"{stem}_faiss.index",
+        cache_root / f"{stem}_meta.json",
+    )
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    np.save(tmp, array)
+    tmp.replace(path)
 
 
 def _load_split(dataset_id: str, config_name: str, split_name: str):
@@ -269,20 +308,66 @@ def _build_mteb_retriever(
     bm25 = BM25Okapi([tokenize(t) for t in texts])
     _log_progress(f"Loading embedding model {model_key}...")
     embed_model = get_embed_model(model_key)
-    _log_progress(
-        f"Embedding {len(texts)} corpus texts (this can take a while) "
-        f"with batch_size={embed_batch_size}..."
+    emb_cache_path, faiss_cache_path, meta_cache_path = _mteb_cache_paths(
+        model_key=model_key,
+        dataset_id=dataset_id,
+        max_corpus=max_corpus,
     )
-    embed_start_ts = time.perf_counter()
-    embeddings = embed_texts(texts, embed_model, batch_size=embed_batch_size, show_progress=True)
-    _log_progress(f"Embeddings ready in {time.perf_counter() - embed_start_ts:.1f}s.")
+
+    embeddings: np.ndarray
+    if emb_cache_path.exists():
+        _log_progress(f"Loading cached embeddings from {emb_cache_path}...")
+        load_start = time.perf_counter()
+        embeddings = np.load(emb_cache_path)
+        if embeddings.ndim != 2 or embeddings.shape[0] != len(texts):
+            _log_progress("Cached embeddings shape mismatch; rebuilding embeddings cache...")
+            emb_cache_path.unlink(missing_ok=True)
+            embeddings = None  # type: ignore[assignment]
+        else:
+            _log_progress(f"Loaded cached embeddings in {time.perf_counter() - load_start:.1f}s.")
+    else:
+        embeddings = None  # type: ignore[assignment]
+
+    if embeddings is None:
+        _log_progress(
+            f"Embedding {len(texts)} corpus texts (this can take a while) "
+            f"with batch_size={embed_batch_size}..."
+        )
+        embed_start_ts = time.perf_counter()
+        embeddings = embed_texts(texts, embed_model, batch_size=embed_batch_size, show_progress=True)
+        _log_progress(f"Embeddings ready in {time.perf_counter() - embed_start_ts:.1f}s.")
+        _log_progress(f"Saving embeddings cache -> {emb_cache_path}")
+        _atomic_save_npy(emb_cache_path, embeddings)
 
     # For MTEB corpus sizes (10k-20k), FlatIP builds much faster than HNSW
     # and gives exact neighbors, avoiding long HNSW construction stalls.
-    _log_progress("Building FAISS index (FlatIP/exact)...")
-    faiss_start_ts = time.perf_counter()
-    faiss_index = build_faiss_index(embeddings, use_hnsw=False)
-    _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
+    if faiss_cache_path.exists():
+        _log_progress(f"Loading cached FAISS index from {faiss_cache_path}...")
+        faiss_start_ts = time.perf_counter()
+        faiss_index = faiss.read_index(str(faiss_cache_path))
+        _log_progress(f"FAISS index loaded in {time.perf_counter() - faiss_start_ts:.1f}s.")
+    else:
+        _log_progress("Building FAISS index (FlatIP/exact)...")
+        faiss_start_ts = time.perf_counter()
+        faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+        _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
+        _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
+        tmp_faiss = faiss_cache_path.with_suffix(faiss_cache_path.suffix + ".tmp")
+        faiss.write_index(faiss_index, str(tmp_faiss))
+        tmp_faiss.replace(faiss_cache_path)
+
+    _atomic_write_json(
+        meta_cache_path,
+        {
+            "model_key": model_key,
+            "dataset_id": dataset_id,
+            "max_corpus": max_corpus,
+            "n_texts": len(texts),
+            "embedding_shape": list(embeddings.shape),
+            "embeddings_path": str(emb_cache_path),
+            "faiss_path": str(faiss_cache_path),
+        },
+    )
     hybrid = HybridRetriever(faiss_index, bm25, chunks, embed_model)
     _log_progress(f"Hybrid retriever is ready (total build: {time.perf_counter() - start_ts:.1f}s).")
 
