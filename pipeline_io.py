@@ -89,6 +89,7 @@ def save_judge_results_csv(judge_results: list[Any], output_path: Path) -> None:
             "label_score": r.label_score,
             "justification_score": r.justification_score,
             "evidence_score": r.evidence_score,
+            "completeness_score": r.completeness_score,
             "overall_score": r.overall_score,
             "reasoning": r.reasoning,
         }
