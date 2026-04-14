@@ -170,18 +170,24 @@ class HybridRetriever:
         self.embed_model = embed_model
         self.use_reranker = use_reranker
         self.chunk_groups = [evidence_group_for_document(c.document) for c in chunks]
-
         self._group_resources: dict[str, dict[str, object]] = {}
-        group_to_indices: dict[str, list[int]] = {
+        self._group_to_indices: dict[str, list[int]] = {
             "binding_law": [],
             "policy_or_recommendation_docs": [],
         }
         for idx, grp in enumerate(self.chunk_groups):
-            group_to_indices.setdefault(grp, []).append(idx)
+            self._group_to_indices.setdefault(grp, []).append(idx)
 
-        for group_name, global_indices in group_to_indices.items():
+    def _ensure_group_resources(self) -> None:
+        """Build split-retrieval group indices lazily on first use."""
+        if self._group_resources:
+            return
+
+        print("[retrieval] Preparing split-evidence group indices (one-time setup)")
+        for group_name, global_indices in self._group_to_indices.items():
             if not global_indices:
                 continue
+
             group_texts = [self.chunks[i].text for i in global_indices]
             group_embeddings = embed_texts(
                 group_texts,
@@ -342,8 +348,8 @@ class HybridRetriever:
 
         local_fused_scores = {local_idx: score for local_idx, score in fused_local}
         candidates: list[tuple[int, float, str]] = []
-        for global_idx in hybrid_global[:rerank_top]:
-            local_idx = global_indices.index(global_idx)
+        for local_idx in hybrid_local[:rerank_top]:
+            global_idx = global_indices[local_idx]
             candidates.append((global_idx, float(local_fused_scores.get(local_idx, 0.0)), group_name))
         return candidates
 
@@ -413,6 +419,8 @@ class HybridRetriever:
         near_dup_suppression: bool,
     ) -> RetrievalResult:
         """Retrieve separately from binding law and policy docs, then merge."""
+        self._ensure_group_resources()
+
         q_emb = embed_texts(
             [query],
             self.embed_model,
