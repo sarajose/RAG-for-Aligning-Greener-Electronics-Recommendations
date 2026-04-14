@@ -258,6 +258,7 @@ def _build_mteb_retriever(
 ):
     from rank_bm25 import BM25Okapi
 
+    start_ts = time.perf_counter()
     _log_progress(f"Preparing hybrid retriever for model={model_key}, dataset={dataset_id}")
     _log_progress("Loading corpus split for retriever build...")
     corpus_ds = _load_split(dataset_id, "en-corpus", "test")
@@ -272,11 +273,18 @@ def _build_mteb_retriever(
         f"Embedding {len(texts)} corpus texts (this can take a while) "
         f"with batch_size={embed_batch_size}..."
     )
+    embed_start_ts = time.perf_counter()
     embeddings = embed_texts(texts, embed_model, batch_size=embed_batch_size, show_progress=True)
-    _log_progress("Building FAISS index...")
-    faiss_index = build_faiss_index(embeddings)
+    _log_progress(f"Embeddings ready in {time.perf_counter() - embed_start_ts:.1f}s.")
+
+    # For MTEB corpus sizes (10k-20k), FlatIP builds much faster than HNSW
+    # and gives exact neighbors, avoiding long HNSW construction stalls.
+    _log_progress("Building FAISS index (FlatIP/exact)...")
+    faiss_start_ts = time.perf_counter()
+    faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+    _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
     hybrid = HybridRetriever(faiss_index, bm25, chunks, embed_model)
-    _log_progress("Hybrid retriever is ready.")
+    _log_progress(f"Hybrid retriever is ready (total build: {time.perf_counter() - start_ts:.1f}s).")
 
     if use_reranker and reranker is not None:
         return RerankedRetriever(
