@@ -63,7 +63,7 @@ def check_token_lengths(
     """Analyze token lengths against model limits."""
     tokenizer = model.tokenizer
     limit = get_model_max_tokens(model)
-    lengths = [len(tokenizer.encode(text, add_special_tokens=True)) for text in texts]
+    lengths = [len(tokenizer.encode(text, add_special_tokens=True, verbose=False)) for text in texts]
     over = [length for length in lengths if length > limit]
 
     summary = {
@@ -104,7 +104,7 @@ def _truncate_overlong_texts(texts: list[str], model: SentenceTransformer) -> tu
     truncated = 0
 
     for text in texts:
-        token_ids = tokenizer.encode(text, add_special_tokens=True)
+        token_ids = tokenizer.encode(text, add_special_tokens=True, verbose=False)
         if len(token_ids) <= limit:
             out.append(text)
             continue
