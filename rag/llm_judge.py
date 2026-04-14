@@ -50,7 +50,8 @@ class JudgeResult:
     label_score: int          # 1-5
     justification_score: int  # 1-5
     evidence_score: int       # 1-5
-    overall_score: float      # average
+    completeness_score: int   # 1-5 (gap analysis + improvement suggestions)
+    overall_score: float      # average of all four scores
     reasoning: str
     raw_response: str = ""
 
@@ -74,11 +75,13 @@ def _parse_judge_response(raw: str) -> dict:
         label_s = int(data.get("label_score", 1))
         just_s = int(data.get("justification_score", 1))
         evid_s = int(data.get("evidence_score", 1))
+        comp_s = int(data.get("completeness_score", 1))
         return {
             "label_score": label_s,
             "justification_score": just_s,
             "evidence_score": evid_s,
-            "overall_score": round((label_s + just_s + evid_s) / 3, 2),
+            "completeness_score": comp_s,
+            "overall_score": round((label_s + just_s + evid_s + comp_s) / 4, 2),
             "reasoning": str(data.get("reasoning", "")),
         }
     except (json.JSONDecodeError, ValueError):
@@ -86,23 +89,25 @@ def _parse_judge_response(raw: str) -> dict:
 
     # Strategy 2: regex extraction from partial JSON
     scores: dict[str, int] = {}
-    for field in ("label_score", "justification_score", "evidence_score"):
+    for field in ("label_score", "justification_score", "evidence_score", "completeness_score"):
         m = re.search(rf'"{field}"\s*:\s*([1-5])', text)
         if m:
             scores[field] = int(m.group(1))
     reasoning_m = re.search(r'"reasoning"\s*:\s*"([^"]*)"', text)
     reasoning = reasoning_m.group(1) if reasoning_m else ""
 
-    if len(scores) == 3:
+    if len(scores) == 4:
         label_s = scores["label_score"]
         just_s = scores["justification_score"]
         evid_s = scores["evidence_score"]
+        comp_s = scores["completeness_score"]
         logger.warning("Judge JSON malformed — recovered scores via regex: %s", scores)
         return {
             "label_score": label_s,
             "justification_score": just_s,
             "evidence_score": evid_s,
-            "overall_score": round((label_s + just_s + evid_s) / 3, 2),
+            "completeness_score": comp_s,
+            "overall_score": round((label_s + just_s + evid_s + comp_s) / 4, 2),
             "reasoning": reasoning or "Scores extracted from malformed JSON response.",
         }
 
@@ -112,6 +117,7 @@ def _parse_judge_response(raw: str) -> dict:
         "label_score": 1,
         "justification_score": 1,
         "evidence_score": 1,
+        "completeness_score": 1,
         "overall_score": 1.0,
         "reasoning": "PARSE_ERROR: Judge response was not valid JSON. Default scores were assigned.",
     }
@@ -150,7 +156,7 @@ class LLMJudge:
         model_name: str = DEFAULT_JUDGE_MODEL,
         quantize_4bit: bool = JUDGE_QUANTIZE_4BIT,
         device_map: str = "auto",
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 1024,
         offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
         self.model_name = model_name
@@ -271,6 +277,7 @@ class LLMJudge:
             label_score=parsed["label_score"],
             justification_score=parsed["justification_score"],
             evidence_score=parsed["evidence_score"],
+            completeness_score=parsed["completeness_score"],
             overall_score=parsed["overall_score"],
             reasoning=_normalize_reasoning_to_english(parsed["reasoning"]),
             raw_response=raw,
