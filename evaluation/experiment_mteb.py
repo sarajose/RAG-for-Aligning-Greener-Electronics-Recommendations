@@ -344,8 +344,25 @@ def _build_mteb_retriever(
     if faiss_cache_path.exists():
         _log_progress(f"Loading cached FAISS index from {faiss_cache_path}...")
         faiss_start_ts = time.perf_counter()
-        faiss_index = faiss.read_index(str(faiss_cache_path))
-        _log_progress(f"FAISS index loaded in {time.perf_counter() - faiss_start_ts:.1f}s.")
+        try:
+            faiss_index = faiss.read_index(str(faiss_cache_path))
+            if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
+                raise RuntimeError(
+                    f"Cached FAISS ntotal mismatch: ntotal={int(getattr(faiss_index, 'ntotal', -1))}, "
+                    f"chunks={len(chunks)}"
+                )
+            _log_progress(f"FAISS index loaded in {time.perf_counter() - faiss_start_ts:.1f}s.")
+        except Exception as exc:
+            _log_progress(f"Cached FAISS invalid/corrupt ({exc}); rebuilding cache...")
+            faiss_cache_path.unlink(missing_ok=True)
+            _log_progress("Building FAISS index (FlatIP/exact)...")
+            faiss_start_ts = time.perf_counter()
+            faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+            _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
+            _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
+            tmp_faiss = faiss_cache_path.with_suffix(faiss_cache_path.suffix + ".tmp")
+            faiss.write_index(faiss_index, str(tmp_faiss))
+            tmp_faiss.replace(faiss_cache_path)
     else:
         _log_progress("Building FAISS index (FlatIP/exact)...")
         faiss_start_ts = time.perf_counter()

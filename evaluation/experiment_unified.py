@@ -9,10 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, EMBEDDING_MODELS, SPLADE_MAX_LENGTH, SPLADE_MODEL
-from embedding_indexing import build_index
+from embedding_indexing import build_index, load_indices
 from evaluation.evaluation import evaluate_retrieval
 from evaluation.experiment_exports import export_gold_retrieved_chunks, export_whitepaper_retrieved_chunks
 from evaluation.full_eval import add_significance_markers, build_ablation_table, collect_per_query_scores, format_ablation_report
@@ -170,6 +171,51 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             _write_step_checkpoint(f"indices_ready__{model_key}")
         else:
             _write_step_checkpoint(f"indices_ready__{model_key}")
+
+        def _faiss_preflight_ok(current_model_key: str) -> tuple[bool, str]:
+            try:
+                faiss_index, _, chunks = load_indices(current_model_key)
+                ntotal = int(getattr(faiss_index, "ntotal", -1))
+                dim = int(getattr(faiss_index, "d", 0))
+                if dim <= 0:
+                    return False, "FAISS index dimension is invalid"
+                if ntotal <= 0:
+                    return False, "FAISS index is empty"
+                if ntotal != len(chunks):
+                    return False, f"FAISS/chunks mismatch (ntotal={ntotal}, chunks={len(chunks)})"
+                probe_k = 1
+                probe_query = np.zeros((1, dim), dtype=np.float32)
+                _, idx = faiss_index.search(probe_query, probe_k)
+                if idx.shape != (1, probe_k):
+                    return False, "FAISS probe query returned unexpected shape"
+                return True, f"ntotal={ntotal}, dim={dim}"
+            except Exception as exc:
+                return False, str(exc)
+
+        ok, reason = _faiss_preflight_ok(model_key)
+        if ok:
+            print(f"[sanity] FAISS preflight OK for {model_key}: {reason}")
+            _write_step_checkpoint(f"faiss_preflight__{model_key}", {"status": "ok", "details": reason})
+        else:
+            print(f"[warn] FAISS preflight failed for {model_key}: {reason}")
+            if not args.auto_build_indices:
+                raise RuntimeError(
+                    f"FAISS preflight failed for '{model_key}'. Details: {reason}. "
+                    "Rebuild with `python main.py build -i <evidence_csv> -m <model_key>` "
+                    "or rerun evaluation with --auto-build-indices."
+                )
+            print(f"[sanity] Rebuilding indices for {model_key} due to failed preflight...")
+            build_index(args.evidence_csv, model_key)
+            ok_after, reason_after = _faiss_preflight_ok(model_key)
+            if not ok_after:
+                raise RuntimeError(
+                    f"FAISS preflight still failing after rebuild for '{model_key}': {reason_after}"
+                )
+            print(f"[sanity] FAISS preflight recovered for {model_key}: {reason_after}")
+            _write_step_checkpoint(
+                f"faiss_preflight__{model_key}",
+                {"status": "recovered_after_rebuild", "details": reason_after},
+            )
 
         retrievers = _build_retrievers_for_model(
             model_key,
