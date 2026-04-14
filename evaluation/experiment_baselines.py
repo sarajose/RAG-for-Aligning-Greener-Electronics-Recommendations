@@ -20,6 +20,9 @@ def _run_splade_eval(
     reranker,
     metrics_rows: list[dict],
     checkpoint_fn,
+    has_metrics_fn=None,
+    step_done_fn=None,
+    mark_step_fn=None,
 ) -> None:
     """Evaluate SPLADE baseline and append metric rows in-place."""
     from evaluation.experiment_mteb import _build_mteb_splade_retriever, _evaluate_mteb_chunk_level
@@ -51,6 +54,12 @@ def _run_splade_eval(
         )
 
     for method_name, retriever in splade_retrievers.items():
+        step_key = f"gold_doc__splade__{method_name}"
+        if has_metrics_fn is not None and has_metrics_fn("gold_standard", "document", "splade", method_name):
+            print(f"[resume] Skipping SPLADE gold-doc step already in metrics: {method_name}")
+            if mark_step_fn is not None:
+                mark_step_fn(step_key)
+            continue
         print(f"[gold-doc] Evaluating {method_name} ...")
         metrics_by_k = evaluate_retrieval(
             retriever,
@@ -75,29 +84,55 @@ def _run_splade_eval(
                 "Check gold CSV delimiter/columns and input path."
             )
         checkpoint_fn(f"gold eval splade/{method_name}")
+        if mark_step_fn is not None:
+            mark_step_fn(step_key)
 
     export_method = "splade_rerank" if "splade_rerank" in splade_retrievers else "splade"
-    export_gold_retrieved_chunks(
-        retriever=splade_retrievers[export_method],
-        model_key="splade",
-        method=export_method,
-        gold_csv=args.gold_csv,
-        out_csv=args.output_dir / f"gold_retrieved_chunks_splade_{export_method}.csv",
-        top_k=args.export_k,
-    )
-
-    if not args.skip_whitepaper:
-        export_whitepaper_retrieved_chunks(
+    gold_out_csv = args.output_dir / f"gold_retrieved_chunks_splade_{export_method}.csv"
+    gold_export_step = f"export_gold__splade__{export_method}"
+    if step_done_fn is not None and step_done_fn(gold_export_step, [gold_out_csv]):
+        print(f"[resume] Skipping SPLADE gold export (already done): {gold_out_csv}")
+    else:
+        export_gold_retrieved_chunks(
             retriever=splade_retrievers[export_method],
             model_key="splade",
             method=export_method,
-            whitepaper_csv=args.whitepaper_csv,
-            out_csv=args.output_dir / f"whitepaper_retrieved_chunks_splade_{export_method}.csv",
+            gold_csv=args.gold_csv,
+            out_csv=gold_out_csv,
             top_k=args.export_k,
         )
+        if mark_step_fn is not None:
+            mark_step_fn(gold_export_step)
+
+    if not args.skip_whitepaper:
+        whitepaper_out_csv = args.output_dir / f"whitepaper_retrieved_chunks_splade_{export_method}.csv"
+        whitepaper_export_step = f"export_whitepaper__splade__{export_method}"
+        if step_done_fn is not None and step_done_fn(whitepaper_export_step, [whitepaper_out_csv]):
+            print(f"[resume] Skipping SPLADE whitepaper export (already done): {whitepaper_out_csv}")
+        else:
+            export_whitepaper_retrieved_chunks(
+                retriever=splade_retrievers[export_method],
+                model_key="splade",
+                method=export_method,
+                whitepaper_csv=args.whitepaper_csv,
+                out_csv=whitepaper_out_csv,
+                top_k=args.export_k,
+            )
+            if mark_step_fn is not None:
+                mark_step_fn(whitepaper_export_step)
 
     if not args.skip_mteb:
         mteb_method = "splade_rerank" if reranker is not None else "splade"
+        mteb_step = f"mteb_chunk__splade__{mteb_method}"
+        mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_splade_{mteb_method}.csv"
+        if (
+            has_metrics_fn is not None
+            and has_metrics_fn("mteb_legal", "chunk", "splade", mteb_method)
+            and step_done_fn is not None
+            and step_done_fn(mteb_step, [mteb_out_csv])
+        ):
+            print(f"[resume] Skipping SPLADE MTEB step already completed: {mteb_method}")
+            return
         try:
             print(
                 f"[mteb] Starting chunk-level eval for model=splade, method={mteb_method}, "
@@ -126,7 +161,7 @@ def _run_splade_eval(
                 max_corpus=args.max_corpus,
                 model_key="splade",
                 method=mteb_method,
-                out_retrieved_csv=args.output_dir / f"mteb_retrieved_chunks_splade_{mteb_method}.csv",
+                out_retrieved_csv=mteb_out_csv,
             )
             metrics_rows.extend(
                 _metrics_to_rows(
@@ -138,6 +173,8 @@ def _run_splade_eval(
                 )
             )
             checkpoint_fn(f"mteb eval splade/{mteb_method}")
+            if mark_step_fn is not None:
+                mark_step_fn(mteb_step)
             print(
                 f"[mteb] Finished chunk-level eval for model=splade, method={mteb_method}",
                 flush=True,
@@ -155,6 +192,9 @@ def _run_colbert_eval(
     reranker,
     metrics_rows: list[dict],
     checkpoint_fn,
+    has_metrics_fn=None,
+    step_done_fn=None,
+    mark_step_fn=None,
 ) -> None:
     """Evaluate ColBERT baseline and append metric rows in-place."""
     print("\n=== BGE-M3 ColBERT multi-vector baseline ===")
@@ -174,6 +214,12 @@ def _run_colbert_eval(
         )
 
     for method_name, retriever in colbert_retrievers.items():
+        step_key = f"gold_doc__colbert__{method_name}"
+        if has_metrics_fn is not None and has_metrics_fn("gold_standard", "document", "colbert", method_name):
+            print(f"[resume] Skipping ColBERT gold-doc step already in metrics: {method_name}")
+            if mark_step_fn is not None:
+                mark_step_fn(step_key)
+            continue
         print(f"[gold-doc] Evaluating {method_name} ...")
         metrics_by_k = evaluate_retrieval(
             retriever,
@@ -198,23 +244,39 @@ def _run_colbert_eval(
                 "Check gold CSV delimiter/columns and input path."
             )
         checkpoint_fn(f"gold eval colbert/{method_name}")
+        if mark_step_fn is not None:
+            mark_step_fn(step_key)
 
     export_method = "colbert_rerank" if "colbert_rerank" in colbert_retrievers else "colbert"
-    export_gold_retrieved_chunks(
-        retriever=colbert_retrievers[export_method],
-        model_key="colbert",
-        method=export_method,
-        gold_csv=args.gold_csv,
-        out_csv=args.output_dir / f"gold_retrieved_chunks_colbert_{export_method}.csv",
-        top_k=args.export_k,
-    )
-
-    if not args.skip_whitepaper:
-        export_whitepaper_retrieved_chunks(
+    gold_out_csv = args.output_dir / f"gold_retrieved_chunks_colbert_{export_method}.csv"
+    gold_export_step = f"export_gold__colbert__{export_method}"
+    if step_done_fn is not None and step_done_fn(gold_export_step, [gold_out_csv]):
+        print(f"[resume] Skipping ColBERT gold export (already done): {gold_out_csv}")
+    else:
+        export_gold_retrieved_chunks(
             retriever=colbert_retrievers[export_method],
             model_key="colbert",
             method=export_method,
-            whitepaper_csv=args.whitepaper_csv,
-            out_csv=args.output_dir / f"whitepaper_retrieved_chunks_colbert_{export_method}.csv",
+            gold_csv=args.gold_csv,
+            out_csv=gold_out_csv,
             top_k=args.export_k,
         )
+        if mark_step_fn is not None:
+            mark_step_fn(gold_export_step)
+
+    if not args.skip_whitepaper:
+        whitepaper_out_csv = args.output_dir / f"whitepaper_retrieved_chunks_colbert_{export_method}.csv"
+        whitepaper_export_step = f"export_whitepaper__colbert__{export_method}"
+        if step_done_fn is not None and step_done_fn(whitepaper_export_step, [whitepaper_out_csv]):
+            print(f"[resume] Skipping ColBERT whitepaper export (already done): {whitepaper_out_csv}")
+        else:
+            export_whitepaper_retrieved_chunks(
+                retriever=colbert_retrievers[export_method],
+                model_key="colbert",
+                method=export_method,
+                whitepaper_csv=args.whitepaper_csv,
+                out_csv=whitepaper_out_csv,
+                top_k=args.export_k,
+            )
+            if mark_step_fn is not None:
+                mark_step_fn(whitepaper_export_step)

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -57,13 +58,62 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
     mteb_embed_batch_size = max(1, int(getattr(args, "mteb_embed_batch_size", 32)))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoints_dir = args.output_dir / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
     metrics_rows: list[dict] = []
     metrics_csv = args.output_dir / "metrics_all.csv"
+
+    metric_key_cols = ["dataset", "level", "model_key", "method", "k"]
+
+    def _checkpoint_path(step_key: str) -> Any:
+        safe = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in step_key)
+        return checkpoints_dir / f"{safe}.done"
+
+    def _write_step_checkpoint(step_key: str, extra_payload: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {
+            "step": step_key,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        if extra_payload:
+            payload.update(extra_payload)
+        _checkpoint_path(step_key).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _step_done(step_key: str, required_files: list[Any] | None = None) -> bool:
+        done = _checkpoint_path(step_key).exists()
+        if not done:
+            return False
+        if not required_files:
+            return True
+        return all(Path(p).exists() for p in required_files)
+
+    def _has_metrics(dataset: str, level: str, model_key: str, method: str) -> bool:
+        rows = [
+            r for r in metrics_rows
+            if str(r.get("dataset")) == dataset
+            and str(r.get("level")) == level
+            and str(r.get("model_key")) == model_key
+            and str(r.get("method")) == method
+        ]
+        if not rows:
+            return False
+        found_k = {int(r.get("k")) for r in rows if r.get("k") is not None}
+        expected_k = {int(k) for k in set(args.k_values)}
+        return expected_k.issubset(found_k)
+
+    if metrics_csv.exists():
+        prev_df = pd.read_csv(metrics_csv)
+        if not prev_df.empty:
+            metrics_rows = prev_df.to_dict(orient="records")
+            print(f"[resume] Loaded {len(metrics_rows)} existing metric rows from {metrics_csv}")
 
     def _checkpoint_metrics(stage: str) -> None:
         if not metrics_rows:
             return
-        pd.DataFrame(metrics_rows).to_csv(metrics_csv, index=False)
+        dedup_df = pd.DataFrame(metrics_rows)
+        dedup_df = dedup_df.drop_duplicates(subset=metric_key_cols, keep="last").reset_index(drop=True)
+        metrics_rows.clear()
+        metrics_rows.extend(dedup_df.to_dict(orient="records"))
+        dedup_df.to_csv(metrics_csv, index=False)
         print(
             f"[checkpoint] Saved {len(metrics_rows)} metric rows after {stage} -> {metrics_csv}",
             flush=True,
@@ -89,6 +139,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         "include_splade": bool(getattr(args, "include_splade", False)),
         "splade_model": str(getattr(args, "splade_model", SPLADE_MODEL)),
         "splade_max_length": int(getattr(args, "splade_max_length", SPLADE_MAX_LENGTH)),
+        "checkpoints_dir": str(checkpoints_dir),
         "outputs": {},
     }
 
@@ -116,6 +167,9 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 )
             print(f"[build] Missing indices for {model_key}; building now...")
             build_index(args.evidence_csv, model_key)
+            _write_step_checkpoint(f"indices_ready__{model_key}")
+        else:
+            _write_step_checkpoint(f"indices_ready__{model_key}")
 
         retrievers = _build_retrievers_for_model(
             model_key,
@@ -126,6 +180,11 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         )
 
         for method_name, retriever in retrievers.items():
+            gold_step = f"gold_doc__{model_key}__{method_name}"
+            if _has_metrics("gold_standard", "document", model_key, method_name):
+                print(f"[resume] Skipping already-computed gold-doc metrics: {model_key}/{method_name}")
+                _write_step_checkpoint(gold_step)
+                continue
             print(f"[gold-doc] Evaluating {method_name} ...")
             metrics_by_k = evaluate_retrieval(
                 retriever,
@@ -150,29 +209,47 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     "Check gold CSV delimiter/columns and input path."
                 )
             _checkpoint_metrics(f"gold eval {model_key}/{method_name}")
+            _write_step_checkpoint(gold_step)
 
         export_method = "rrf_rerank" if "rrf_rerank" in retrievers else "rrf"
-        export_gold_retrieved_chunks(
-            retriever=retrievers[export_method],
-            model_key=model_key,
-            method=export_method,
-            gold_csv=args.gold_csv,
-            out_csv=args.output_dir / f"gold_retrieved_chunks_{model_key}_{export_method}.csv",
-            top_k=args.export_k,
-        )
-
-        if not args.skip_whitepaper:
-            export_whitepaper_retrieved_chunks(
+        gold_export_csv = args.output_dir / f"gold_retrieved_chunks_{model_key}_{export_method}.csv"
+        gold_export_step = f"export_gold__{model_key}__{export_method}"
+        if _step_done(gold_export_step, [gold_export_csv]):
+            print(f"[resume] Skipping existing gold export: {gold_export_csv}")
+        else:
+            export_gold_retrieved_chunks(
                 retriever=retrievers[export_method],
                 model_key=model_key,
                 method=export_method,
-                whitepaper_csv=args.whitepaper_csv,
-                out_csv=args.output_dir / f"whitepaper_retrieved_chunks_{model_key}_{export_method}.csv",
+                gold_csv=args.gold_csv,
+                out_csv=gold_export_csv,
                 top_k=args.export_k,
             )
+            _write_step_checkpoint(gold_export_step, {"artifact": str(gold_export_csv)})
+
+        if not args.skip_whitepaper:
+            whitepaper_export_csv = args.output_dir / f"whitepaper_retrieved_chunks_{model_key}_{export_method}.csv"
+            whitepaper_export_step = f"export_whitepaper__{model_key}__{export_method}"
+            if _step_done(whitepaper_export_step, [whitepaper_export_csv]):
+                print(f"[resume] Skipping existing whitepaper export: {whitepaper_export_csv}")
+            else:
+                export_whitepaper_retrieved_chunks(
+                    retriever=retrievers[export_method],
+                    model_key=model_key,
+                    method=export_method,
+                    whitepaper_csv=args.whitepaper_csv,
+                    out_csv=whitepaper_export_csv,
+                    top_k=args.export_k,
+                )
+                _write_step_checkpoint(whitepaper_export_step, {"artifact": str(whitepaper_export_csv)})
 
         if not args.skip_mteb:
             mteb_method = "rrf_rerank" if reranker is not None else "rrf"
+            mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv"
+            mteb_step = f"mteb_chunk__{model_key}__{mteb_method}"
+            if _has_metrics("mteb_legal", "chunk", model_key, mteb_method) and _step_done(mteb_step, [mteb_out_csv]):
+                print(f"[resume] Skipping existing MTEB eval: {model_key}/{mteb_method}")
+                continue
             try:
                 print(
                     f"[mteb] Starting chunk-level eval for model={model_key}, method={mteb_method}, "
@@ -196,7 +273,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     max_corpus=args.max_corpus,
                     model_key=model_key,
                     method=mteb_method,
-                    out_retrieved_csv=args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv",
+                    out_retrieved_csv=mteb_out_csv,
                 )
                 metrics_rows.extend(
                     _metrics_to_rows(
@@ -208,6 +285,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     )
                 )
                 _checkpoint_metrics(f"mteb eval {model_key}/{mteb_method}")
+                _write_step_checkpoint(mteb_step, {"artifact": str(mteb_out_csv)})
                 print(
                     f"[mteb] Finished chunk-level eval for model={model_key}, method={mteb_method}",
                     flush=True,
@@ -220,10 +298,26 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     raise
 
     if getattr(args, "include_splade", False):
-        _run_splade_eval(args, reranker, metrics_rows, _checkpoint_metrics)
+        _run_splade_eval(
+            args,
+            reranker,
+            metrics_rows,
+            _checkpoint_metrics,
+            has_metrics_fn=_has_metrics,
+            step_done_fn=_step_done,
+            mark_step_fn=_write_step_checkpoint,
+        )
 
     if getattr(args, "include_colbert", False):
-        _run_colbert_eval(args, reranker, metrics_rows, _checkpoint_metrics)
+        _run_colbert_eval(
+            args,
+            reranker,
+            metrics_rows,
+            _checkpoint_metrics,
+            has_metrics_fn=_has_metrics,
+            step_done_fn=_step_done,
+            mark_step_fn=_write_step_checkpoint,
+        )
 
     metrics_df = pd.DataFrame(metrics_rows)
     metrics_df.to_csv(metrics_csv, index=False)
