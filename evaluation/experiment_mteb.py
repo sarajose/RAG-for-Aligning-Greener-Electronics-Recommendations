@@ -54,7 +54,10 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    np.save(tmp, array)
+    # Write through a file handle so NumPy does not auto-append ".npy"
+    # to the temporary filename, which breaks atomic rename on Windows.
+    with tmp.open("wb") as f:
+        np.save(f, array)
     tmp.replace(path)
 
 
