@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -47,18 +48,69 @@ def _mteb_cache_paths(
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _replace_with_retry(tmp, path)
+
+
+def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: float = 0.1) -> None:
+    """Atomically replace `path` with `tmp`, with short retries for Windows file-lock races."""
+    last_exc: Exception | None = None
+    current_tmp = tmp
+    for attempt in range(retries):
+        try:
+            current_tmp.replace(path)
+            return
+        except FileNotFoundError as exc:
+            # If the target already exists, another writer likely won the race.
+            if path.exists():
+                return
+            # Guard against historical NumPy temp naming (".tmp.npy") leftovers.
+            alt_tmp = Path(str(current_tmp) + ".npy")
+            if alt_tmp.exists():
+                current_tmp = alt_tmp
+                continue
+            last_exc = exc
+        except PermissionError as exc:
+            last_exc = exc
+        time.sleep(base_delay_s * (attempt + 1))
+
+    if last_exc is not None:
+        raise last_exc
+
+
+def _cleanup_stale_temp_files(path: Path) -> None:
+    """Remove stale temp siblings for a cache artifact without failing the run."""
+    try:
+        for candidate in path.parent.glob(f"{path.name}.*.tmp*"):
+            candidate.unlink(missing_ok=True)
+    except Exception:
+        # Best-effort cleanup only.
+        pass
+
+
+def _recover_legacy_npy_tmp(path: Path) -> bool:
+    """Promote historical '*.tmp.npy' leftovers into the final cache path if possible."""
+    legacy = Path(str(path) + ".tmp.npy")
+    if not legacy.exists():
+        return False
+    try:
+        _replace_with_retry(legacy, path)
+        return True
+    except Exception:
+        return False
 
 
 def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    _cleanup_stale_temp_files(path)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
     # Write through a file handle so NumPy does not auto-append ".npy"
     # to the temporary filename, which breaks atomic rename on Windows.
     with tmp.open("wb") as f:
         np.save(f, array)
-    tmp.replace(path)
+        f.flush()
+        os.fsync(f.fileno())
+    _replace_with_retry(tmp, path)
 
 
 def _load_split(dataset_id: str, config_name: str, split_name: str):
@@ -317,17 +369,23 @@ def _build_mteb_retriever(
         max_corpus=max_corpus,
     )
 
+    _recover_legacy_npy_tmp(emb_cache_path)
     embeddings: np.ndarray
     if emb_cache_path.exists():
         _log_progress(f"Loading cached embeddings from {emb_cache_path}...")
         load_start = time.perf_counter()
-        embeddings = np.load(emb_cache_path)
-        if embeddings.ndim != 2 or embeddings.shape[0] != len(texts):
-            _log_progress("Cached embeddings shape mismatch; rebuilding embeddings cache...")
+        try:
+            embeddings = np.load(emb_cache_path)
+            if embeddings.ndim != 2 or embeddings.shape[0] != len(texts):
+                _log_progress("Cached embeddings shape mismatch; rebuilding embeddings cache...")
+                emb_cache_path.unlink(missing_ok=True)
+                embeddings = None  # type: ignore[assignment]
+            else:
+                _log_progress(f"Loaded cached embeddings in {time.perf_counter() - load_start:.1f}s.")
+        except Exception as exc:
+            _log_progress(f"Cached embeddings invalid/corrupt ({exc}); rebuilding embeddings cache...")
             emb_cache_path.unlink(missing_ok=True)
             embeddings = None  # type: ignore[assignment]
-        else:
-            _log_progress(f"Loaded cached embeddings in {time.perf_counter() - load_start:.1f}s.")
     else:
         embeddings = None  # type: ignore[assignment]
 
@@ -349,6 +407,8 @@ def _build_mteb_retriever(
         faiss_start_ts = time.perf_counter()
         try:
             faiss_index = faiss.read_index(str(faiss_cache_path))
+            if int(getattr(faiss_index, "d", 0)) <= 0:
+                raise RuntimeError("Cached FAISS index has invalid dimension")
             if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
                 raise RuntimeError(
                     f"Cached FAISS ntotal mismatch: ntotal={int(getattr(faiss_index, 'ntotal', -1))}, "
@@ -361,20 +421,36 @@ def _build_mteb_retriever(
             _log_progress("Building FAISS index (FlatIP/exact)...")
             faiss_start_ts = time.perf_counter()
             faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+            if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
+                raise RuntimeError(
+                    "Built FAISS index size mismatch: "
+                    f"ntotal={int(getattr(faiss_index, 'ntotal', -1))}, chunks={len(chunks)}"
+                )
             _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
             _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
-            tmp_faiss = faiss_cache_path.with_suffix(faiss_cache_path.suffix + ".tmp")
+            _cleanup_stale_temp_files(faiss_cache_path)
+            tmp_faiss = faiss_cache_path.with_name(
+                f"{faiss_cache_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp"
+            )
             faiss.write_index(faiss_index, str(tmp_faiss))
-            tmp_faiss.replace(faiss_cache_path)
+            _replace_with_retry(tmp_faiss, faiss_cache_path)
     else:
         _log_progress("Building FAISS index (FlatIP/exact)...")
         faiss_start_ts = time.perf_counter()
         faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+        if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
+            raise RuntimeError(
+                "Built FAISS index size mismatch: "
+                f"ntotal={int(getattr(faiss_index, 'ntotal', -1))}, chunks={len(chunks)}"
+            )
         _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
         _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
-        tmp_faiss = faiss_cache_path.with_suffix(faiss_cache_path.suffix + ".tmp")
+        _cleanup_stale_temp_files(faiss_cache_path)
+        tmp_faiss = faiss_cache_path.with_name(
+            f"{faiss_cache_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp"
+        )
         faiss.write_index(faiss_index, str(tmp_faiss))
-        tmp_faiss.replace(faiss_cache_path)
+        _replace_with_retry(tmp_faiss, faiss_cache_path)
 
     _atomic_write_json(
         meta_cache_path,

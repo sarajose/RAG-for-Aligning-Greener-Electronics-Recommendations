@@ -341,7 +341,15 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
                     print(f"[warn] Skipping MTEB for model={model_key} due to memory limits: {exc}")
                 else:
-                    raise
+                    print(f"[warn] Skipping MTEB for model={model_key} due to non-fatal error: {exc}")
+                _write_step_checkpoint(
+                    mteb_step,
+                    {
+                        "status": "skipped",
+                        "error": str(exc),
+                    },
+                )
+                continue
 
     if getattr(args, "include_splade", False):
         _run_splade_eval(

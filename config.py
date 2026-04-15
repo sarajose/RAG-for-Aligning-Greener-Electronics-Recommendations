@@ -15,8 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
-# OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
-OUTPUT_DIR = Path("D:/rag_outputs")   # Use D: drive for outputs
+OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
+#OUTPUT_DIR = Path("D:/rag_outputs")   # Use D: drive for outputs
 INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
@@ -73,10 +73,14 @@ DEFAULT_RETRIEVAL_MODE = "flat_baseline"
 
 # LLM (alignment classification) — open-source models
 
-LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # classifier
-JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # independent LLM-as-judge
+# LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # classifier
+LLM_MODEL = "Qwen/Qwen1.5-0.5B-Chat"          # classifier (lower-memory default)
+# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # judge (same model family as classifier)
+# JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"  # judge (lower-memory default)
+JUDGE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # judge (different model, lower-parameter)
+# JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # independent LLM-as-judge
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
-LLM_MAX_TOKENS = 1024
+LLM_MAX_TOKENS = 2048
 LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
 JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
 LLM_GPU_MAX_MEMORY = "8GiB"
