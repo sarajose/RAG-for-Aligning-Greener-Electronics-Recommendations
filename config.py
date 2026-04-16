@@ -34,6 +34,13 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR / "hub"))
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+# Reduce CUDA memory fragmentation — important on 4 GiB consumer GPUs.
+# expandable_segments lets PyTorch release memory back to the OS between stages.
+os.environ.setdefault(
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "expandable_segments:True,max_split_size_mb:128",
+)
+
 # Default file paths
 
 EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"  # C: drive
@@ -71,15 +78,17 @@ RETRIEVAL_MODES: list[str] = [
 ]
 DEFAULT_RETRIEVAL_MODE = "flat_baseline"
 
-# LLM (alignment classification) — open-source models
-LLM_MODEL = "microsoft/Phi-3.5-mini-instruct"
-# LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"          # classifier
-# LLM_MODEL = "Qwen/Qwen1.5-0.5B-Chat"          # classifier (lower-memory default)
-# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # judge
-# JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"  # judge (lower-memory default)
-# JUDGE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # judge (different model, lower-parameter)
-JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct" 
-# JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # independent LLM-as-judge
+# Lightweight:
+LLM_MODEL  = "Qwen/Qwen2.5-1.5B-Instruct"   # classifier — fits in 4 GiB
+JUDGE_MODEL = "HuggingFaceTB/SmolLM3-3B"  # judge      — fits in 4 GiB
+#
+# Medium:
+# LLM_MODEL  = "microsoft/Phi-3.5-mini-instruct"    # ~2.1 GiB, better quality
+# JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"          # ~1.7 GiB, different family
+#
+# High:
+# LLM_MODEL  = "mistralai/Mistral-7B-Instruct-v0.3" # 7B, needs ≥8 GiB
+# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # 7B, needs ≥8 GiB
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 2048
 LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
@@ -87,8 +96,11 @@ JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
 # Judge generation limits. Increase JUDGE_MAX_NEW_TOKENS for more detailed explanations.
 JUDGE_MAX_NEW_TOKENS = 1024
 JUDGE_MAX_INPUT_TOKENS = 4096
-LLM_GPU_MAX_MEMORY = "8GiB"
-LLM_CPU_MAX_MEMORY = "24GiB"
+# Set to ~87 % of physical VRAM to leave headroom for the CUDA context and
+# PyTorch allocator overhead.  The Kaggle notebook patches this to "14GiB"
+# for the T4 at runtime, so changing it here only affects local runs.
+LLM_GPU_MAX_MEMORY = "3.5GiB"   # tuned for 4 GiB RTX (e.g. RTX 3050 Laptop)
+LLM_CPU_MAX_MEMORY = "16GiB"    # CPU offload for layers that don't fit on GPU
 LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"
 LLM_OFFLOAD_DIR.mkdir(parents=True, exist_ok=True)
 

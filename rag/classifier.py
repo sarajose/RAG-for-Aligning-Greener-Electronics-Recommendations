@@ -155,6 +155,7 @@ class AlignmentClassifier:
         quantize_4bit: bool = LLM_QUANTIZE_4BIT,
         device_map: str = "auto",
         max_new_tokens: int = LLM_MAX_TOKENS,
+        max_input_tokens: int = 4096, #change when I have more memory and resources
         temperature: float = LLM_TEMPERATURE,
         offload_folder: Path = LLM_OFFLOAD_DIR / "classifier",
     ) -> None:
@@ -168,6 +169,7 @@ class AlignmentClassifier:
             )
             max_new_tokens = _CLASSIFIER_MIN_NEW_TOKENS
         self.max_new_tokens = max_new_tokens
+        self.max_input_tokens = max_input_tokens
         self.temperature = temperature
 
         logger.info("Loading classifier model: %s", model_name)
@@ -232,7 +234,10 @@ class AlignmentClassifier:
             messages, tokenize=False, add_generation_prompt=True,
         )
         inputs = self.tokenizer(
-            [text], return_tensors="pt",
+            [text],
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_input_tokens,
         ).to(self.model.device)
 
         gen_kwargs: dict = {"max_new_tokens": self.max_new_tokens}

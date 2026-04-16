@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,19 @@ def _retrieve_all(
     return results
 
 
+def _free_gpu(note: str = "") -> None:
+    """Release Python objects and flush the CUDA allocator cache."""
+    import torch
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        alloc = torch.cuda.memory_allocated() / 1024 ** 3
+        reserved = torch.cuda.memory_reserved() / 1024 ** 3
+        tag = f" [{note}]" if note else ""
+        print(f"[gpu]{tag} allocated={alloc:.2f} GiB | reserved={reserved:.2f} GiB")
+
+
 def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[ClassificationResult]:
     """Classify all retrieved recommendation contexts."""
     from rag.classifier import AlignmentClassifier
@@ -106,6 +120,8 @@ def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[Classif
     for idx, (rec, retrieval) in enumerate(zip(recs, retrieval_results), start=1):
         cls_results.append(classifier.classify(rec.text, retrieval.ranked_chunks))
         _print_progress("classify", idx, total)
+    del classifier
+    _free_gpu("after classifier")
     return cls_results
 
 
@@ -156,9 +172,15 @@ def cmd_prompt(args: argparse.Namespace) -> None:
         max_chunks_per_doc=args.max_chunks_per_doc,
         near_dup_suppression=args.near_dup_suppression,
     )
+    # Free the retriever (embedding model + reranker) before loading the LLM.
+    # On a 4 GiB GPU both cannot coexist; explicit deletion + cache flush ensures
+    # the VRAM is available before AlignmentClassifier loads.
+    del retriever
+    _free_gpu("after retriever")
 
     cls_results: list[ClassificationResult] = []
     if not args.retrieve_only:
+        # _classify_all deletes the classifier internally before returning.
         cls_results = _classify_all(recs, retrieval_results)
 
     save_prompt_output_csv(args.output, recs, retrieval_results, cls_results)
@@ -171,8 +193,12 @@ def cmd_prompt(args: argparse.Namespace) -> None:
     if args.judge and cls_results:
         from rag.llm_judge import LLMJudge
 
+        # Classifier was already freed by _classify_all; load the judge into
+        # the now-empty VRAM.
         judge = LLMJudge()
         judge_results = judge.evaluate_batch(cls_results)
+        del judge
+        _free_gpu("after judge")
         judge_path = args.output.parent / f"{args.output.stem}_judge.csv"
         save_judge_results_csv(judge_results, judge_path)
         print(f"[prompt] Judge -> {judge_path}")
