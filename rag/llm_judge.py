@@ -42,9 +42,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
 # Reasoning models (e.g. SmolLM3) emit a <think>…</think> block before JSON.
-# That block alone can be 300-600 tokens; the JSON output is another ~150.
-# 512 is the minimum to have a chance of seeing the closing </think> + JSON.
-_JUDGE_MIN_NEW_TOKENS = 512
+# That block alone is typically 300-800 tokens; the JSON output adds ~150.
+# 1024 ensures the model can finish both the thinking block and the JSON.
+_JUDGE_MIN_NEW_TOKENS = 1024
 
 
 @dataclass
@@ -73,8 +73,11 @@ def _parse_judge_response(raw: str) -> dict:
     """
     text = raw.strip()
     # Reasoning models (e.g. SmolLM3) wrap chain-of-thought in <think>…</think>
-    # before the actual JSON.  Strip the block so the parsers below see only JSON.
+    # before the actual JSON.  Two cases:
+    # 1. Complete block: <think>…</think>JSON  →  strip the block, keep JSON.
+    # 2. Truncated mid-think (no </think>): <think>…  →  nothing useful remains.
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL).strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
