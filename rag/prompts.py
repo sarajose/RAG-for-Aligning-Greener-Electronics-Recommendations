@@ -189,12 +189,19 @@ Respond with the JSON object only.
 
 
 # FORMATTING HELPERS
-def format_evidence_block(chunks: list[Chunk]) -> str:
+def format_evidence_block(chunks: list[Chunk], max_chars_per_chunk: int | None = 600) -> str:
     """Format retrieved chunks into a numbered evidence block.
 
     When a chunk carries ``article_text`` (parent-child chunking), the full
-    article text is shown instead of the short paragraph so the classifier
-    receives richer generation context.
+    article text is used as the body; otherwise ``chunk.text`` is used.
+
+    Parameters
+    ----------
+    max_chars_per_chunk : int | None
+        Truncate each chunk body to this many characters before building the
+        prompt.  Keeps prompts within the 4096-token input limit on consumer
+        GPUs (600 chars × 10 chunks ≈ 1 500 tokens, well inside budget).
+        Pass ``None`` only on high-VRAM machines where you want the full text.
     """
     parts: list[str] = []
     for i, c in enumerate(chunks, 1):
@@ -204,6 +211,8 @@ def format_evidence_block(chunks: list[Chunk]) -> str:
         if c.paragraph:
             header += f" | §{c.paragraph}"
         body = c.article_text if c.article_text else c.text
+        if max_chars_per_chunk is not None and len(body) > max_chars_per_chunk:
+            body = body[:max_chars_per_chunk] + "…"
         parts.append(f"{header}\n{body}\n")
     return "\n".join(parts)
 
@@ -211,9 +220,10 @@ def format_evidence_block(chunks: list[Chunk]) -> str:
 def build_classifier_messages(
     recommendation: str,
     chunks: list[Chunk],
+    max_chars_per_chunk: int | None = 600,
 ) -> list[dict[str, str]]:
     """Build the chat messages for the alignment classifier."""
-    evidence_block = format_evidence_block(chunks)
+    evidence_block = format_evidence_block(chunks, max_chars_per_chunk=max_chars_per_chunk)
     user_msg = CLASSIFIER_USER_TEMPLATE.format(
         recommendation=recommendation,
         k=len(chunks),
@@ -265,9 +275,10 @@ def build_judge_messages(
     label: str,
     justification: str,
     cited_chunk_ids: list[str],
+    max_chars_per_chunk: int | None = 600,
 ) -> list[dict[str, str]]:
     """Build the chat messages for the LLM-as-judge."""
-    evidence_block = format_evidence_block(chunks)
+    evidence_block = format_evidence_block(chunks, max_chars_per_chunk=max_chars_per_chunk)
     user_msg = JUDGE_USER_TEMPLATE.format(
         recommendation=recommendation,
         k=len(chunks),
