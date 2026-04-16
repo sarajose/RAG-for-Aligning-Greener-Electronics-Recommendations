@@ -156,7 +156,7 @@ OUTPUT FORMAT (strict JSON — no markdown fences)
   "evidence_score": <int 1-5>,
   "completeness_score": <int 1-5>,
   "overall_score": <float — average of the four scores>,
-  "reasoning": "<4-6 sentences: one sentence assessing each criterion A-D, then an overall conclusion>"
+  "reasoning": "<2-3 sentences: briefly assess the key strengths and weaknesses across criteria A-D>"
 }
 
 LANGUAGE REQUIREMENT (mandatory)
