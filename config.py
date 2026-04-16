@@ -73,11 +73,11 @@ DEFAULT_RETRIEVAL_MODE = "flat_baseline"
 
 # LLM (alignment classification) — open-source models
 
-# LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # classifier
-LLM_MODEL = "Qwen/Qwen1.5-0.5B-Chat"          # classifier (lower-memory default)
-# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # judge (same model family as classifier)
-# JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"  # judge (lower-memory default)
-JUDGE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # judge (different model, lower-parameter)
+LLM_MODEL = "mistralai/Mistral-3B-Instruct-v0.3"          # classifier
+# LLM_MODEL = "Qwen/Qwen1.5-0.5B-Chat"          # classifier (lower-memory default)
+# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # judge
+JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"  # judge (lower-memory default)
+# JUDGE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # judge (different model, lower-parameter)
 # JUDGE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"  # independent LLM-as-judge
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 2048
