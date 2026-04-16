@@ -309,6 +309,8 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                     dataset_id=args.mteb_dataset,
                     max_corpus=args.max_corpus,
                     embed_batch_size=mteb_embed_batch_size,
+                    embed_device=getattr(args, "mteb_device", "auto"),
+                    embed_precision=getattr(args, "mteb_precision", "float32"),
                 )
                 mteb_metrics = _evaluate_mteb_chunk_level(
                     retriever=mteb_retriever,

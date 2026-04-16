@@ -127,6 +127,9 @@ def embed_texts(
     show_progress: bool = True,
     *,
     is_query: bool = False,
+    device: str | None = None,
+    precision: str = "float32",
+    allow_cpu_fallback: bool = True,
 ) -> np.ndarray:
     """Encode texts into normalized float32 embeddings."""
     formatted = _format_texts_for_model(texts, model, is_query=is_query)
@@ -141,23 +144,40 @@ def embed_texts(
             candidate_batch_sizes.append(bs)
 
     last_error: Exception | None = None
-    for bs in candidate_batch_sizes:
-        try:
-            if show_progress and bs != batch_size:
-                print(f"[embed] Retrying with smaller batch_size={bs} due memory pressure.")
-            return model.encode(
-                formatted,
-                batch_size=bs,
-                show_progress_bar=show_progress,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-            )
-        except RuntimeError as e:
-            msg = str(e).lower()
-            if "out of memory" in msg or "not enough memory" in msg:
-                last_error = e
-                continue
-            raise
+    encode_device = None if device in (None, "", "auto") else device
+
+    def _try_encode(run_device: str | None) -> np.ndarray:
+        nonlocal last_error
+        for bs in candidate_batch_sizes:
+            try:
+                if show_progress and bs != batch_size:
+                    print(f"[embed] Retrying with smaller batch_size={bs} due memory pressure.")
+                return model.encode(
+                    formatted,
+                    batch_size=bs,
+                    show_progress_bar=show_progress,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    device=run_device,
+                    precision=precision,
+                )
+            except RuntimeError as e:
+                msg = str(e).lower()
+                if "out of memory" in msg or "not enough memory" in msg:
+                    last_error = e
+                    continue
+                raise
+        raise RuntimeError("Embedding failed before model.encode could be executed.")
+
+    try:
+        return _try_encode(encode_device)
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if allow_cpu_fallback and encode_device not in (None, "cpu") and ("out of memory" in msg or "not enough memory" in msg):
+            if show_progress:
+                print("[embed] CUDA memory exhausted; retrying embedding on CPU.")
+            return _try_encode("cpu")
+        raise
 
     if last_error is not None:
         raise last_error

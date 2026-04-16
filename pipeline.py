@@ -92,6 +92,18 @@ def main() -> None:
         default=32,
         help="Embedding batch size used while building MTEB dense indices (lower = less memory).",
     )
+    p_eval.add_argument(
+        "--mteb-device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device used for MTEB embedding; auto uses the model default and falls back to CPU on OOM.",
+    )
+    p_eval.add_argument(
+        "--mteb-precision",
+        choices=["float32", "int8", "uint8", "binary", "ubinary"],
+        default="float32",
+        help="Embedding precision used by SentenceTransformer.encode during MTEB building.",
+    )
     p_eval.add_argument("--full-mteb", action="store_true")
     p_eval.add_argument("--skip-whitepaper", action="store_true")
     p_eval.add_argument("--skip-mteb", action="store_true", help="Skip MTEB legal tasks (faster)")

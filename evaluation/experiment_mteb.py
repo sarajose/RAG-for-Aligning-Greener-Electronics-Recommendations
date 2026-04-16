@@ -349,6 +349,8 @@ def _build_mteb_retriever(
     dataset_id: str,
     max_corpus: int | None,
     embed_batch_size: int = 32,
+    embed_device: str | None = None,
+    embed_precision: str = "float32",
 ):
     from rank_bm25 import BM25Okapi
 
@@ -395,7 +397,15 @@ def _build_mteb_retriever(
             f"with batch_size={embed_batch_size}..."
         )
         embed_start_ts = time.perf_counter()
-        embeddings = embed_texts(texts, embed_model, batch_size=embed_batch_size, show_progress=True)
+        embeddings = embed_texts(
+            texts,
+            embed_model,
+            batch_size=embed_batch_size,
+            show_progress=True,
+            device=embed_device,
+            precision=embed_precision,
+            allow_cpu_fallback=True,
+        )
         _log_progress(f"Embeddings ready in {time.perf_counter() - embed_start_ts:.1f}s.")
         _log_progress(f"Saving embeddings cache -> {emb_cache_path}")
         _atomic_save_npy(emb_cache_path, embeddings)
