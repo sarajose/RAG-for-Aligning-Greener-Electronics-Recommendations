@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
+# 4 scores + overall_score + 4-6 sentence reasoning ≈ 150 tokens minimum;
+# 256 gives comfortable headroom on T4.
+_JUDGE_MIN_NEW_TOKENS = 256
+
 
 @dataclass
 class JudgeResult:
@@ -184,6 +188,12 @@ class LLMJudge:
         offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
         self.model_name = model_name
+        if max_new_tokens < _JUDGE_MIN_NEW_TOKENS:
+            print(
+                f"[judge] max_new_tokens={max_new_tokens} is too low to complete "
+                f"the JSON structure; raising to {_JUDGE_MIN_NEW_TOKENS}."
+            )
+            max_new_tokens = _JUDGE_MIN_NEW_TOKENS
         self.max_new_tokens = max_new_tokens
         self.max_input_tokens = max_input_tokens
 

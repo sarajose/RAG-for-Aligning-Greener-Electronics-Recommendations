@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 # Default open-source model
 DEFAULT_CLASSIFIER_MODEL = LLM_MODEL
 
+# The 4-section JSON justification (1-2 sentences each) needs ~300 tokens
+# minimum; 512 gives comfortable headroom and costs < 0.5 GiB extra KV cache
+# on a T4 with a 3-4B parameter model.
+_CLASSIFIER_MIN_NEW_TOKENS = 512
+
 # Short-key aliases so callers can pass "qwen" or "mistral" instead of the full HF ID.
 CLASSIFIER_MODEL_KEYS: dict[str, str] = {
     "qwen": LLM_MODEL,
@@ -156,6 +161,12 @@ class AlignmentClassifier:
         if model_key is not None:
             model_name = CLASSIFIER_MODEL_KEYS.get(model_key, model_name)
         self.model_name = model_name
+        if max_new_tokens < _CLASSIFIER_MIN_NEW_TOKENS:
+            print(
+                f"[classifier] max_new_tokens={max_new_tokens} is too low to complete "
+                f"the JSON structure; raising to {_CLASSIFIER_MIN_NEW_TOKENS}."
+            )
+            max_new_tokens = _CLASSIFIER_MIN_NEW_TOKENS
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
 
