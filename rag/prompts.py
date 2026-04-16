@@ -22,9 +22,14 @@ OUTPUT FORMAT (strict JSON — no markdown fences, no extra keys)
 ───────────────────────────────────────────────────────────────
 {
   "label": "<one of the labels below>",
-  "justification": "<structured analysis with four labelled sections — see JUSTIFICATION STRUCTURE>",
+  "justification": "<PLAIN TEXT STRING — the four section labels written inline, NOT a nested JSON object>",
   "cited_chunk_ids": ["<chunk_id_1>", "<chunk_id_2>"]
 }
+
+CRITICAL: "justification" must be a single flat string value.
+Do NOT write it as a nested object like {"LEGAL BASIS": "...", "CORRECTNESS": "..."}.
+Write the section labels literally inside the string, e.g.:
+"justification": "LEGAL BASIS: ... CORRECTNESS: ... GAPS: ... IMPROVEMENTS: ..."
 
 ALIGNMENT LABELS
 ────────────────
@@ -51,27 +56,19 @@ ALIGNMENT LABELS
 JUSTIFICATION STRUCTURE
 ───────────────────────
 Your justification MUST contain all four of the following labelled sections,
-each answered in 2-4 sentences:
+each answered in 1-2 concise sentences:
 
-LEGAL BASIS: Name each specific article, paragraph, and directive/regulation
-that applies to this recommendation. Explain precisely how each provision
-maps to (or fails to map to) the recommendation's content. Quote or closely
-paraphrase the operative legal text where possible.
+LEGAL BASIS: Name the specific article, paragraph, and directive/regulation
+that applies. Explain precisely how each provision maps to the recommendation.
 
 CORRECTNESS: Assess whether the recommendation is factually accurate and
-legally sound as written. Point out any inaccuracies, overgeneralizations,
-incorrect legal references, or misleading framing relative to what the
-legislation actually says.
+legally sound. Note any inaccuracies or overgeneralizations.
 
-GAPS: Identify what the recommendation is missing, under-specifies, or
-leaves ambiguous. Consider: thresholds not mentioned, product categories
-excluded, obligations that exist in law but are absent from the recommendation,
-or conditions the recommendation ignores.
+GAPS: Identify the key missing elements: thresholds not mentioned, product
+categories excluded, or obligations absent from the recommendation.
 
-IMPROVEMENTS: Give 2-3 concrete, actionable suggestions for how the
-recommendation could be revised to be more complete, accurate, or better
-aligned with the legislative evidence. Reference specific provisions or
-legal concepts where possible.
+IMPROVEMENTS: Give 2 concrete, actionable suggestions for how the
+recommendation could be revised. Reference specific provisions where possible.
 
 RULES
 ─────
@@ -80,8 +77,9 @@ RULES
 • Always cite at least one chunk_id when a legal basis exists.
 • All four sections (LEGAL BASIS, CORRECTNESS, GAPS, IMPROVEMENTS) are
   mandatory — do not omit any section even if the recommendation is Aligned.
-• Write in plain English prose within the justification string; use the
-  section labels literally as shown above.
+• The "justification" value must be a plain string — never a nested JSON
+  object. Write LEGAL BASIS, CORRECTNESS, GAPS, IMPROVEMENTS inline.
+• Be concise — the entire JSON response must complete within 512 tokens.
 
 EXAMPLES
 ────────
@@ -90,19 +88,19 @@ Recommendation: "Electrical and electronic equipment placed on the market must n
 contain lead, mercury, cadmium, hexavalent chromium, PBB or PBDE above the maximum
 concentration values."
 Output:
-{"label": "Aligned", "justification": "LEGAL BASIS: Article 4(1) of the RoHS Directive (2011/65/EU) directly prohibits placing EEE on the market containing lead, mercury, cadmium, hexavalent chromium, PBB or PBDE above the maximum concentration values set in Annex II. The provision is binding for all Member States and covers virtually all electrical and electronic equipment placed on the EU market. CORRECTNESS: The recommendation is factually accurate and mirrors the statutory text almost verbatim; the six substances named and the reference to concentration thresholds are consistent with the operative RoHS obligation. No legal inaccuracies are present. GAPS: The recommendation omits the Annex II concentration thresholds (e.g., 0.1 wt% for most substances, 0.01 wt% for cadmium), which are essential for practical compliance. It also does not mention the exemptions in Annex III and IV that allow certain applications to exceed these limits, nor the obligations on economic operators beyond manufacturers (importers, distributors). IMPROVEMENTS: (1) Specify the maximum concentration values from Annex II to make the recommendation self-contained and actionable. (2) Add a clause acknowledging that Annex III/IV exemptions exist so readers are not misled about absolute prohibitions. (3) Extend the scope to cover importers and distributors, not only manufacturers, in line with Article 4(2).", "cited_chunk_ids": ["<chunk_id>"]}
+{"label": "Aligned", "justification": "LEGAL BASIS: Article 4(1) of RoHS Directive (2011/65/EU) directly prohibits EEE containing lead, mercury, cadmium, hexavalent chromium, PBB or PBDE above maximum concentration values in Annex II. CORRECTNESS: The recommendation accurately mirrors the statutory text with no legal inaccuracies. GAPS: The Annex II concentration thresholds (e.g., 0.1 wt%) and Annex III/IV exemptions are not mentioned. IMPROVEMENTS: (1) Specify the Annex II thresholds to make the recommendation actionable. (2) Note Annex III/IV exemptions to avoid implying absolute prohibitions.", "cited_chunk_ids": ["<chunk_id>"]}
 
 Example 2 — No explicit legal basis
 Recommendation: "Manufacturers should publish annual material composition reports broken
 down by product line, including the percentage weight of each polymer type used."
 Output:
-{"label": "No explicit legal basis", "justification": "LEGAL BASIS: None of the retrieved provisions establishes a binding requirement to publish annual product-line-level polymer composition reports. ESPR (Regulation 2024/1781) enables delegated acts to impose product-specific information requirements via the Digital Product Passport, and CSRD (Directive 2022/2464) mandates sustainability disclosures at the company level, but neither mandates the specific granularity described. CORRECTNESS: The recommendation is well-intentioned but presupposes a legal obligation that does not yet exist under current binding EU law. Framing it as a 'should' is appropriate given the gap, but it may mislead readers into thinking such reporting is forthcoming under a specific instrument. GAPS: There is no adopted delegated act under ESPR that specifies polymer-level reporting for consumer electronics; the CSRD disclosure framework operates at entity level, not product-line level. The recommendation also does not address to whom the report would be submitted or made public. IMPROVEMENTS: (1) Reframe the recommendation as a voluntary best practice or anticipatory measure pending future ESPR delegated acts. (2) Specify a plausible legal vehicle — e.g., future ESPR product group regulations — under which this obligation could be introduced. (3) Clarify the reporting channel (e.g., Digital Product Passport, public registry) to make the proposal more concrete.", "cited_chunk_ids": []}
+{"label": "No explicit legal basis", "justification": "LEGAL BASIS: No retrieved provision requires annual product-line-level polymer reports; ESPR (Regulation 2024/1781) enables such requirements via delegated acts, but none has been adopted for consumer electronics. CORRECTNESS: The recommendation presupposes an obligation that does not yet exist; the 'should' framing is appropriate but may mislead readers. GAPS: No ESPR delegated act specifies polymer-level reporting, and CSRD (Directive 2022/2464) operates at entity level, not product-line level. IMPROVEMENTS: (1) Reframe as a voluntary best practice pending future ESPR delegated acts. (2) Specify the reporting channel, such as the Digital Product Passport.", "cited_chunk_ids": []}
 
 Example 3 — Beyond compliance
 Recommendation: "All new consumer electronics should contain a minimum of 50% post-consumer
 recycled plastic in their casings."
 Output:
-{"label": "Beyond compliance", "justification": "LEGAL BASIS: ESPR (Regulation 2024/1781, Article 4 and Annex I) empowers the Commission to adopt delegated acts setting recycled content requirements for specific product groups via ecodesign regulations. No adopted delegated act currently mandates any recycled plastic content threshold for consumer electronics casings. The Battery Regulation (2023/1542) sets recycled content targets for batteries but does not extend to device casings. CORRECTNESS: The recommendation is technically valid as a sustainability objective but overstates current mandatory requirements. Presenting it without the qualifier that no binding threshold currently exists risks non-compliance confusion. GAPS: The recommendation does not specify which product categories within 'consumer electronics' it targets, ignores the delegated-act process required to translate ESPR principles into binding thresholds, and omits practical constraints such as material availability and verification mechanisms. IMPROVEMENTS: (1) Add explicit acknowledgement that the 50% threshold exceeds current mandatory requirements and anticipates future ESPR delegated acts. (2) Narrow the scope to a specific product category (e.g., smartphones, laptops) where recycled plastics are technically feasible. (3) Reference EN standards or the EU Ecolabel criteria that already suggest recycled content targets, providing a voluntary benchmark until binding rules apply.", "cited_chunk_ids": ["<chunk_id>"]}
+{"label": "Beyond compliance", "justification": "LEGAL BASIS: ESPR (Regulation 2024/1781, Article 4) empowers delegated acts to set recycled content requirements, but no such act currently mandates a threshold for consumer electronics casings. CORRECTNESS: The recommendation is a valid sustainability goal but overstates current requirements; no 50% threshold exists in binding EU law. GAPS: The recommendation omits specifying target product categories and ignores the delegated-act process required under ESPR. IMPROVEMENTS: (1) Acknowledge that the 50% threshold exceeds current requirements and anticipates future ESPR delegated acts. (2) Narrow scope to a specific product category where recycled plastics are technically feasible.", "cited_chunk_ids": ["<chunk_id>"]}
 """
 
 CLASSIFIER_USER_TEMPLATE = """\

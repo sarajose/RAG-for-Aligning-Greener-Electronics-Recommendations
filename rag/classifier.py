@@ -64,8 +64,17 @@ def _parse_json_response(raw: str) -> dict:
         if any(key not in data for key in required):
             return None
 
-        label = str(data.get("label", "")).strip()
-        justification = str(data.get("justification", "")).strip()
+        label = data.get("label", "")
+        if not isinstance(label, str):
+            return None
+        label = label.strip()
+
+        justification = data.get("justification", "")
+        # Reject nested objects — justification must be a plain string.
+        if not isinstance(justification, str):
+            return None
+        justification = justification.strip()
+
         cited_raw = data.get("cited_chunk_ids", [])
         if not isinstance(cited_raw, list):
             return None

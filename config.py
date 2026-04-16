@@ -84,6 +84,9 @@ LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
 LLM_MAX_TOKENS = 2048
 LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
 JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
+# Judge generation limits. Increase JUDGE_MAX_NEW_TOKENS for more detailed explanations.
+JUDGE_MAX_NEW_TOKENS = 1024
+JUDGE_MAX_INPUT_TOKENS = 4096
 LLM_GPU_MAX_MEMORY = "8GiB"
 LLM_CPU_MAX_MEMORY = "24GiB"
 LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"
