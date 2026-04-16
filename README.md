@@ -240,7 +240,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--k-values` | `1 3 5 10 20` | Evaluation cutoffs |
 | `--whitepaper-csv` | recommendations CSV | Whitepaper recommendations path |
 | `--skip-whitepaper` | off | Skip whitepaper chunk export |
-| `--mteb-dataset` | `mteb/legalbench_consumer_contracts_qa` | MTEB retrieval dataset |
+| `--mteb-dataset` | `mteb/MuPLeR-retrieval` | MTEB retrieval dataset (English subset: `en-corpus`, `en-queries`, `en-qrels`) |
 | `--mteb-split` | `test` | MTEB split |
 | `--max-corpus` | `20000` | MTEB corpus cap |
 | `--full-mteb` | off | Use full MTEB corpus |
@@ -291,7 +291,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `outputs/eval_unified/ranking_k10.csv` | Models ranked by NDCG@10 |
 | `outputs/eval_unified/metrics_summary_k10.csv` | Summary table at k=10 |
 | `outputs/eval_unified/comparison_k10.csv` | Best vs second model gaps |
-| `outputs/eval_unified/gold_retrieved_chunks_<model>.csv` | Retrieved chunks for gold queries |
+| `outputs/eval_unified/gold_retrieved_chunks_<model>_<method>.csv` | Retrieved chunks for gold queries |
 | `outputs/eval_unified/interpretation_k10.txt` | Auto-generated interpretation |
 | `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas |
 
@@ -305,7 +305,7 @@ Three complementary evaluation signals are produced in a single run:
 |---|---|---|
 | **Gold standard** | Document | 275 manual annotations (recommendation → EU regulation) |
 | **Projected chunk** | Chunk (pseudo-relevance) | Same gold, all chunks from relevant docs marked relevant |
-| **MTEB legal tasks** | Chunk | MTEB (eng, v2) Retrieval tasks filtered to legal domain |
+| **MTEB legal tasks** | Chunk | MuPLeR-retrieval (English subset): 10,000 EU legal docs, 200 queries |
 
 Ablation configurations compared per model: `bm25`, `dense`, `rrf`, `bm25_rerank`, `dense_rerank`, `rrf_rerank`.
 
