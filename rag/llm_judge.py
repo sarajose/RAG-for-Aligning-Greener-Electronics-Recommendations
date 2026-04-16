@@ -27,6 +27,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import (
+    JUDGE_MAX_NEW_TOKENS,
     JUDGE_MODEL,
     JUDGE_QUANTIZE_4BIT,
     LLM_CPU_MAX_MEMORY,
@@ -40,9 +41,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
-# 4 scores + overall_score + 4-6 sentence reasoning ≈ 150 tokens minimum;
-# 256 gives comfortable headroom on T4.
-_JUDGE_MIN_NEW_TOKENS = 256
+# Reasoning models (e.g. SmolLM3) emit a <think>…</think> block before JSON.
+# That block alone can be 300-600 tokens; the JSON output is another ~150.
+# 512 is the minimum to have a chance of seeing the closing </think> + JSON.
+_JUDGE_MIN_NEW_TOKENS = 512
 
 
 @dataclass
@@ -70,6 +72,9 @@ def _parse_judge_response(raw: str) -> dict:
     4. Hard fallback (all scores = 1) when all above fail.
     """
     text = raw.strip()
+    # Reasoning models (e.g. SmolLM3) wrap chain-of-thought in <think>…</think>
+    # before the actual JSON.  Strip the block so the parsers below see only JSON.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
@@ -183,7 +188,7 @@ class LLMJudge:
         model_name: str = DEFAULT_JUDGE_MODEL,
         quantize_4bit: bool = JUDGE_QUANTIZE_4BIT,
         device_map: str = "auto",
-        max_new_tokens: int = 256,
+        max_new_tokens: int = JUDGE_MAX_NEW_TOKENS,
         max_input_tokens: int = 4096,
         offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
