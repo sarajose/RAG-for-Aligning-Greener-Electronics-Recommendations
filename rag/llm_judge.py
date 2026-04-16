@@ -59,10 +59,11 @@ class JudgeResult:
 def _parse_judge_response(raw: str) -> dict:
     """Parse judge JSON output.
 
-    Tries three strategies in order:
+    Tries four strategies in order:
     1. Strict ``json.loads`` on the cleaned text.
-    2. Regex extraction of individual score fields from partial/malformed JSON.
-    3. Hard fallback (all scores = 1) when both above fail.
+    2. Parse an embedded JSON object inside wrapper text.
+    3. Regex extraction of score fields from partial/truncated JSON.
+    4. Hard fallback (all scores = 1) when all above fail.
     """
     text = raw.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -87,7 +88,29 @@ def _parse_judge_response(raw: str) -> dict:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Strategy 2: regex extraction from partial JSON
+    # Strategy 2: recover a JSON object embedded in extra text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            data = json.loads(text[start : end + 1])
+            label_s = int(data.get("label_score", 1))
+            just_s = int(data.get("justification_score", 1))
+            evid_s = int(data.get("evidence_score", 1))
+            comp_s = int(data.get("completeness_score", 1))
+            logger.warning("Judge JSON malformed — recovered embedded object.")
+            return {
+                "label_score": label_s,
+                "justification_score": just_s,
+                "evidence_score": evid_s,
+                "completeness_score": comp_s,
+                "overall_score": round((label_s + just_s + evid_s + comp_s) / 4, 2),
+                "reasoning": str(data.get("reasoning", "")),
+            }
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Strategy 3: regex extraction from partial/truncated JSON
     scores: dict[str, int] = {}
     for field in ("label_score", "justification_score", "evidence_score", "completeness_score"):
         m = re.search(rf'"{field}"\s*:\s*([1-5])', text)
@@ -96,12 +119,12 @@ def _parse_judge_response(raw: str) -> dict:
     reasoning_m = re.search(r'"reasoning"\s*:\s*"([^"]*)"', text)
     reasoning = reasoning_m.group(1) if reasoning_m else ""
 
-    if len(scores) == 4:
-        label_s = scores["label_score"]
-        just_s = scores["justification_score"]
-        evid_s = scores["evidence_score"]
-        comp_s = scores["completeness_score"]
-        logger.warning("Judge JSON malformed — recovered scores via regex: %s", scores)
+    if scores:
+        label_s = scores.get("label_score", 1)
+        just_s = scores.get("justification_score", 1)
+        evid_s = scores.get("evidence_score", 1)
+        comp_s = scores.get("completeness_score", 1)
+        logger.warning("Judge JSON malformed — recovered partial scores via regex: %s", scores)
         return {
             "label_score": label_s,
             "justification_score": just_s,
@@ -111,7 +134,7 @@ def _parse_judge_response(raw: str) -> dict:
             "reasoning": reasoning or "Scores extracted from malformed JSON response.",
         }
 
-    # Strategy 3: hard fallback
+    # Strategy 4: hard fallback
     logger.warning("Failed to parse judge JSON — assigning score 1. Raw: %.120s", text)
     return {
         "label_score": 1,
@@ -156,11 +179,13 @@ class LLMJudge:
         model_name: str = DEFAULT_JUDGE_MODEL,
         quantize_4bit: bool = JUDGE_QUANTIZE_4BIT,
         device_map: str = "auto",
-        max_new_tokens: int = 1024,
+        max_new_tokens: int = 256,
+        max_input_tokens: int = 4096,
         offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
         self.model_name = model_name
         self.max_new_tokens = max_new_tokens
+        self.max_input_tokens = max_input_tokens
 
         logger.info("Loading judge model: %s", model_name)
         print(f"[judge] Loading {model_name} …")
@@ -215,6 +240,13 @@ class LLMJudge:
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name, **load_kwargs,
             )
+
+        # Keep generation deterministic and avoid sampling-flag warnings.
+        if getattr(self.model, "generation_config", None) is not None:
+            self.model.generation_config.do_sample = False
+            self.model.generation_config.temperature = None
+            self.model.generation_config.top_p = None
+            self.model.generation_config.top_k = None
         print("[judge] Model loaded")
 
     def _generate(self, messages: list[dict[str, str]]) -> str:
@@ -223,7 +255,10 @@ class LLMJudge:
             messages, tokenize=False, add_generation_prompt=True,
         )
         inputs = self.tokenizer(
-            [text], return_tensors="pt",
+            [text],
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_input_tokens,
         ).to(self.model.device)
 
         with torch.no_grad():
@@ -251,11 +286,13 @@ class LLMJudge:
         -------
         JudgeResult
         """
+        # Keep judge prompts compact to avoid GPU memory spikes.
+        judge_chunks = [Chunk(**{**c.to_dict(), "article_text": ""}) for c in classification.retrieved_chunks]
         messages = build_judge_messages(
             recommendation=classification.recommendation,
-            chunks=classification.retrieved_chunks,
+            chunks=judge_chunks,
             label=classification.label,
-            justification=classification.justification,
+            justification=classification.justification[:2000],
             cited_chunk_ids=classification.cited_chunk_ids,
         )
         raw = self._generate(messages)
@@ -302,4 +339,6 @@ class LLMJudge:
             print(f"  [judge {i}/{len(classifications)}] "
                   f"{cls_result.recommendation[:60]}…")
             results.append(self.evaluate(cls_result))
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         return results
