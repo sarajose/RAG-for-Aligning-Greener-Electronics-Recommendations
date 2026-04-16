@@ -51,19 +51,61 @@ CLASSIFIER_MODEL_KEYS: dict[str, str] = {
 
 
 def _parse_json_response(raw: str) -> dict:
-    """Parse strict JSON from LLM output, tolerating markdown fences."""
+    """Parse classifier JSON with one lightweight recovery step."""
     text = raw.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM JSON — returning raw text.")
+    text = text.strip()
+
+    def _normalize_payload(data: object) -> dict | None:
+        if not isinstance(data, dict):
+            return None
+        required = ("label", "justification", "cited_chunk_ids")
+        if any(key not in data for key in required):
+            return None
+
+        label = str(data.get("label", "")).strip()
+        justification = str(data.get("justification", "")).strip()
+        cited_raw = data.get("cited_chunk_ids", [])
+        if not isinstance(cited_raw, list):
+            return None
+        cited_chunk_ids = [str(v).strip() for v in cited_raw if str(v).strip()]
+
+        if not label or not justification:
+            return None
+
         return {
-            "label": "PARSE_ERROR",
-            "justification": raw,
-            "cited_chunk_ids": [],
+            "label": label,
+            "justification": justification,
+            "cited_chunk_ids": cited_chunk_ids,
         }
+
+    # 1) Strict JSON
+    try:
+        parsed = _normalize_payload(json.loads(text))
+        if parsed is not None:
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # 2) Recover JSON object embedded in extra text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = _normalize_payload(json.loads(text[start : end + 1]))
+            if parsed is not None:
+                logger.warning("Classifier JSON malformed — recovered embedded object.")
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning("Failed to parse classifier JSON — returning PARSE_ERROR. Raw: %.120s", text)
+    return {
+        "label": "PARSE_ERROR",
+        "justification": raw,
+        "cited_chunk_ids": [],
+    }
 
 
 def _best_matching_label(candidate: str) -> str:
