@@ -111,7 +111,7 @@ python evaluation/full_study.py retrieval-study `
 
 ## CLI reference
 
-Most of these commands are not needed but were used to try different configurations and to work around computational constrains. Therefore is only a reference list in case some specific part wants to be checked.
+Most of these commands are not needed but were used to try different configurations (some of them might be deleted as they are not that useful) and to work around computational constrains. Therefore is only a reference list in case some specific part wants to be checked.
 
 ### `build`
 | Argument | Default | Description |
@@ -196,13 +196,13 @@ Most of these commands are not needed but were used to try different configurati
 
 ## Models
 
-**Embedding models** (key → HuggingFace ID):
+**Embedding models**:
 - `bge-m3` → `BAAI/bge-m3`
 - `e5-large-v2` → `intfloat/e5-large-v2`
 
-**LLM classifiers**:
-- `qwen` → `Qwen/Qwen2.5-7B-Instruct` (default)
-- `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (comparison baseline)
+**LLM classifiers and judge**:
+- `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (classifier)
+- `qwen` → `Qwen/Qwen2.5-7B-Instruct` (judge)
 
 **Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
 
