@@ -205,6 +205,7 @@ Most of these commands are not needed but were used to try different configurati
 - `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (comparison baseline)
 
 **Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
+
 ---
 
 ## File structure
