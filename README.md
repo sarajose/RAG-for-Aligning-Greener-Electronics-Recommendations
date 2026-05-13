@@ -103,23 +103,10 @@ python main.py evaluate `
   --with-robustness
 ```
 
-**One-command local + Kaggle merge** (run local eval and merge downloaded Kaggle metrics in the same command):
 
 ```powershell
-python main.py evaluate `
-  --models bge-m3 e5-large-v2 e5-mistral `
-  --output-dir outputs/eval_unified `
-  --remote-eval-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv
+python main.py merge-eval --remote-csv outputs/eval_mistral/metrics_all.csv outputs/eval_mteb_k_split/metrics_all.csv --output-dir outputs/eval_mteb_k_split_with_mistral
 ```
-
-**Merge-only command** (if local evaluation was already run):
-
-```powershell
-python main.py merge-eval `
-  --remote-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv `
-  --output-dir outputs/eval_unified
-```
-
 **Fast gold-standard-only** (no MTEB download):
 
 ```powershell
@@ -155,47 +142,24 @@ python evaluation/full_study.py prompt-study `
   --output-dir outputs/eval_prompt
 ```
 
-**Full pipeline (local + Kaggle merge for e5-mistral)**:
+**Full pipeline (evidence → indices → evaluation):**
 
 ```powershell
-# 1) Local evidence + indices (lightweight local models)
+# 1) Chunk legal evidence
 python retrieval/chunking_evidence.py -i data/evidence -o outputs/evidence.csv
+
+# 2) Build indices for each embedding model
 python main.py build -i outputs/evidence.csv -m bge-m3
 python main.py build -i outputs/evidence.csv -m e5-large-v2
-# Optional if your local machine can handle it:
-# python main.py build -i outputs/evidence.csv -m e5-mistral
+python main.py build -i outputs/evidence.csv -m e5-mistral
 
-# 2) Local unified evaluation + robustness
+# 3) Run unified evaluation + robustness analysis
 python evaluation/full_study.py retrieval-study `
-  --models bge-m3 e5-large-v2 `
+  --models bge-m3 e5-large-v2 e5-mistral `
   --include-splade `
   --with-robustness-all-models `
   --output-dir outputs/eval_thesis
-
-# 3) Kaggle run for heavy model (e5-mistral-7b-instruct), then merge metrics locally
-python main.py merge-eval `
-  --remote-csv outputs/kaggle/e5_mistral_eval/eval_unified/metrics_all.csv `
-  --output-dir outputs/eval_thesis
-
-# 4) Optional Kaggle classifier + judge comparison
-# Notebook: kaggle/kaggle_mistral_classifier_judge_pipeline.ipynb
-# Upload: outputs/qwen_classifications.csv + outputs/qwen_classifications_retrieved_chunks.csv
-# Download: classification_eval.csv, judge_scores_qwen3b.csv, judge_scores_mistral7b.csv
 ```
-
-**Kaggle notebook handoff (explicit):**
-
-1. Run `kaggle/kaggle_e5_mistral_eval_v2_pipeline.ipynb` to evaluate `e5-mistral` and export:
-  - `eval_unified/metrics_all.csv` (for local `merge-eval`)
-  - `retrieved_chunks.csv` (optional direct input for notebook 2)
-2. Merge `metrics_all.csv` locally with `python main.py merge-eval ...`.
-3. Select best retrieval model from merged metrics and run local prompt classification:
-  - `python main.py prompt --model <BEST_MODEL> --output outputs/qwen_classifications.csv`
-4. Run `kaggle/kaggle_mistral_classifier_judge_pipeline.ipynb` using:
-  - `qwen_classifications.csv`
-  - `retrieved_chunks.csv` or `qwen_classifications_retrieved_chunks.csv`
-5. Use notebook 2 outputs in thesis tables/analysis:
-  - `classification_eval.csv`, `judge_scores_qwen3b.csv`, `judge_scores_mistral7b.csv`
 
 ### 5. Pre-download models
 
@@ -249,22 +213,13 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--auto-build-indices` | off | Build missing indices automatically |
 | `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV used for auto-build |
 | `--include-splade` | off | Include SPLADE sparse baseline |
-| `--include-colbert` | off | Include BGE-M3 ColBERT multi-vector baseline (requires FlagEmbedding) |
 | `--splade-model` | default in `config.py` | SPLADE model id |
 | `--splade-max-length` | default in `config.py` | SPLADE max token length |
-| `--remote-eval-csv` | none | Kaggle/remote `metrics_all.csv` path(s) to merge after local eval |
 | `--force-cpu` | off | Disable GPU |
 | `--with-robustness` | off | Run ablation significance tests |
 | `--robust-model` | first model in `--models` | Model used for robustness stage |
 | `--robust-k` | `10` | K used for robustness stage |
 | `--rrf-k` | `60` | RRF smoothing constant for grid search (e.g. 10, 30, 60, 100) |
-
-### `merge-eval`
-| Argument | Default | Description |
-|---|---|---|
-| `--remote-csv` | required | One or more remote `metrics_all.csv` files |
-| `--output-dir` | `outputs/eval_unified` | Unified output directory |
-| `--ranking-k` | `10` | K used for ranking/summary regeneration |
 
 ---
 
@@ -275,7 +230,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `data/evidence/` | EUR-Lex HTML files |
 | `data/gold_standard_doc_level/gold_standard.csv` | 275 document-level annotations |
 | `data/recommendations_whitepaper/recommendations_v2.csv` | Whitepaper recommendations |
-| `outputs/evidence.csv` | Generated chunk file (from step 1) |
+| `outputs/evidence.csv` | Generated chunk file |
 
 ## Outputs
 
@@ -293,25 +248,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `outputs/eval_unified/comparison_k10.csv` | Best vs second model gaps |
 | `outputs/eval_unified/gold_retrieved_chunks_<model>_<method>.csv` | Retrieved chunks for gold queries |
 | `outputs/eval_unified/interpretation_k10.txt` | Auto-generated interpretation |
-| `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas |
-
----
-
-## Evaluation design
-
-Three complementary evaluation signals are produced in a single run:
-
-| Signal | Level | Source |
-|---|---|---|
-| **Gold standard** | Document | 275 manual annotations (recommendation → EU regulation) |
-| **Projected chunk** | Chunk (pseudo-relevance) | Same gold, all chunks from relevant docs marked relevant |
-| **MTEB legal tasks** | Chunk | MuPLeR-retrieval (English subset): 10,000 EU legal docs, 200 queries |
-
-Ablation configurations compared per model: `bm25`, `dense`, `rrf`, `bm25_rerank`, `dense_rerank`, `rrf_rerank`.
-
-Core metrics: Hit@k, Recall@k, Precision@k, MRR, MAP, NDCG@k, Mean Rank, Chunk Hit Rate (ceiling proxy).
-
-With `--with-robustness`: bootstrap 95% CI and paired permutation tests with significance stars.
+| `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas (not used)|
 
 ---
 
@@ -347,7 +284,6 @@ retrieval/
   dense_retriever.py             DenseRetriever baseline
   reranker.py                    Reranker, RerankedRetriever (cross-encoder)
   splade_retriever.py            SPLADE sparse baseline
-  colbert_retriever.py           ColBERT multi-vector baseline
   base_retriever.py              BaseRetriever interface
   chunking_evidence.py           EUR-Lex HTML → structured CSV chunks
   chunking_recommendations.py    Recommendation CSV loader
@@ -361,10 +297,10 @@ evaluation/
   experiment_unified.py          unified evaluation orchestrator (gold + MTEB + ablation)
   experiment_helpers.py          shared stats/metrics/retriever-building helpers
   experiment_mteb.py             MTEB dataset loading and chunk-level evaluation
-  experiment_baselines.py        SPLADE and ColBERT baseline evaluation helpers
+  experiment_baselines.py        SPLADE baseline evaluation helpers
   experiment_robustness.py       robustness analysis (bootstrap CI, permutation tests)
   experiment_exports.py          chunk export helpers
-  experiment_commands.py         thin CLI entrypoints (merge-eval, download-models)
+  experiment_commands.py         thin CLI entrypoints (download-models)
   full_study.py                  thesis full-study CLI (retrieval-study, prompt-study, k-compare)
   evaluation.py                  core evaluation logic (gold standard loader, per-query scoring)
   full_eval.py                   ablation table, significance markers, report formatting
