@@ -1,22 +1,18 @@
 """
 Configuration for the RAG policy-alignment pipeline.
-
-Centralises paths, model identifiers, alignment labels, and tunable
-hyper-parameters.  Every other module imports from here so that
-nothing is hard-coded elsewhere.
+Centralises paths, model identifiers, alignment labels 
+and hyperparameters.
 """
 
 import os
 from pathlib import Path
 
 # Project paths
-
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 RECOMMENDATIONS_DIR = DATA_DIR / "recommendations"
-OUTPUT_DIR = BASE_DIR / "outputs"  # Use C: drive for outputs
-#OUTPUT_DIR = Path("D:/rag_outputs")   # Use D: drive for outputs
+OUTPUT_DIR = BASE_DIR / "outputs" 
 INDEX_DIR = OUTPUT_DIR / "indices"
 GOLD_STANDARD_DIR = DATA_DIR / "gold_standard_doc_level"
 BENCHMARK_DIR = BASE_DIR / "benchmarks"
@@ -26,7 +22,7 @@ DOCS_DIR = BASE_DIR / "docs"
 for _d in (OUTPUT_DIR, INDEX_DIR, GOLD_STANDARD_DIR, BENCHMARK_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-# Hugging Face cache/download settings (Windows-friendly)
+# Cache/download settings
 HF_CACHE_DIR = OUTPUT_DIR / "hf_cache"
 HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
@@ -34,32 +30,27 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR / "hub"))
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-# Reduce CUDA memory fragmentation — important on 4 GiB consumer GPUs.
-# expandable_segments lets PyTorch release memory back to the OS between stages.
+# Reduce CUDA memory fragmentation (to run in small GPUs)
 os.environ.setdefault(
     "PYTORCH_CUDA_ALLOC_CONF",
+    # expandable_segments lets PyTorch release memory back to the OS between stages
     "expandable_segments:True,max_split_size_mb:128",
 )
 
 # Default file paths
-
-EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"  # C: drive
-EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"  # C: drive
+EVIDENCE_CSV = OUTPUT_DIR / "evidence.csv"
+EVIDENCE_REC_CSV = OUTPUT_DIR / "evidence_recommendation.csv"
 GOLD_STANDARD_CSV = GOLD_STANDARD_DIR / "gold_standard.csv"
 WHITEPAPER_RECOMMENDATIONS_CSV = DATA_DIR / "recommendations_whitepaper" / "recommendations_v2.csv"
-# WHITEPAPER_RECOMMENDATIONS_CSV = Path(r"")
 
 # Embedding models
-
 EMBEDDING_MODELS: dict[str, str] = {
     "bge-m3":     "BAAI/bge-m3",
     "e5-large-v2": "intfloat/e5-large-v2",
     "e5-mistral": "intfloat/e5-mistral-7b-instruct",
 }
 
-# Cross-encoder reranker model (used for reranking top-k retrieved results)
-# Upgraded from ms-marco-MiniLM-L-6-v2 (22M, web-search domain) to bge-reranker-v2-m3
-# (570M, multilingual, same BGE family as the primary embedding model).
+# Cross-encoder reranker model
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_MODEL_KEY = "bge-m3"
 
@@ -67,45 +58,38 @@ DEFAULT_MODEL_KEY = "bge-m3"
 SPLADE_MODEL = "naver/splade-cocondenser-ensembledistil"
 SPLADE_MAX_LENGTH = 256
 
-# # Default for max chunks per doc (used in CLI and retrieval)
-# DEFAULT_MAX_CHUNKS_PER_DOC = 20
-# DEFAULT_NEAR_DUP_SUPPRESSION = False
-
-# Retrieval modes exposed in CLI / retriever.
+# Retrieval modes exposed in CLI
 RETRIEVAL_MODES: list[str] = [
     "flat_baseline",
     "split_evidence_retrieval",
 ]
 DEFAULT_RETRIEVAL_MODE = "flat_baseline"
 
-# Lightweight:
-LLM_MODEL  = "Qwen/Qwen2.5-1.5B-Instruct"   # classifier — fits in 4 GiB
-JUDGE_MODEL = "HuggingFaceTB/SmolLM3-3B"  # judge      — fits in 4 GiB
-#
-# Medium:
-# LLM_MODEL  = "microsoft/Phi-3.5-mini-instruct"    # ~2.1 GiB, better quality
-# JUDGE_MODEL = "Qwen/Qwen2.5-3B-Instruct"          # ~1.7 GiB, different family
-#
-# High:
-# LLM_MODEL  = "mistralai/Mistral-7B-Instruct-v0.3" # 7B, needs ≥8 GiB
-# JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # 7B, needs ≥8 GiB
+# LLM_MODEL  = "Qwen/Qwen2.5-1.5B-Instruct"   # lightweight classifier
+# JUDGE_MODEL = "HuggingFaceTB/SmolLM3-3B"  # lightweight judge
+
+LLM_MODEL  = "mistralai/Mistral-7B-Instruct-v0.3" # (needs >8 GB)
+JUDGE_MODEL = "Qwen/Qwen2.5-7B-Instruct"          # (needs >8 GiB)
 LLM_TEMPERATURE = 0.0          # deterministic for reproducibility
-LLM_MAX_TOKENS = 2048
-LLM_QUANTIZE_4BIT = True         # safer default for limited VRAM
-JUDGE_QUANTIZE_4BIT = True       # judge is also 7B-scale
-# Judge generation limits. Increase JUDGE_MAX_NEW_TOKENS for more detailed explanations.
-JUDGE_MAX_NEW_TOKENS = 1024
-JUDGE_MAX_INPUT_TOKENS = 4096
-# Set to ~87 % of physical VRAM to leave headroom for the CUDA context and
-# PyTorch allocator overhead.  The Kaggle notebook patches this to "14GiB"
-# for the T4 at runtime, so changing it here only affects local runs.
-LLM_GPU_MAX_MEMORY = "3.5GiB"   # tuned for 4 GiB RTX (e.g. RTX 3050 Laptop)
-LLM_CPU_MAX_MEMORY = "16GiB"    # CPU offload for layers that don't fit on GPU
+LLM_MAX_TOKENS = 4096          # for paragraph justifications
+LLM_MAX_INPUT_TOKENS = 16384   # long context (allows full article_text)
+LLM_QUANTIZE_4BIT = True         # saves memory with negligible quality loss
+JUDGE_QUANTIZE_4BIT = True       
+
+# Judge generation limits.
+JUDGE_MAX_NEW_TOKENS = 2048    # full per-criterion reasoning
+JUDGE_MAX_INPUT_TOKENS = 16384 # evidence + classification + system prompt fits
+
+LLM_GPU_MAX_MEMORY = "40GiB"   
+LLM_CPU_MAX_MEMORY = "64GiB"
+
+# Maximum characters per evidence chunk fed to the LLM
+# EVIDENCE_MAX_CHARS_PER_CHUNK: int | None = None # (uses full article_text)
+EVIDENCE_MAX_CHARS_PER_CHUNK: int | None = 6000  # fallback if memory issues
 LLM_OFFLOAD_DIR = OUTPUT_DIR / "offload"
 LLM_OFFLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Alignment labels (to be denfined, just as a placeholder)
-
+# Alignment labels
 ALIGNMENT_LABELS: list[str] = [
     "Aligned",
     "Conditional",
@@ -115,23 +99,20 @@ ALIGNMENT_LABELS: list[str] = [
 ]
 
 # Retrieval hyper-parameters
-
 DEFAULT_TOP_K = 10             # hybrid candidates before reranking
-DEFAULT_RERANK_TOP = 5         # results kept after cross-encoder
+DEFAULT_RERANK_TOP = 7         # results kept after cross-encoder
 FAISS_HNSW_M = 32              # bi-directional links per node
 FAISS_EF_CONSTRUCT = 40        # construction search depth
 FAISS_EF_SEARCH = 16           # query-time search depth
-RRF_K = 60                     # RRF smoothing constant (according to Reciprocal Rank Fusion 
-                               # outperforms Condorcet and individual Rank Learning Methods paper)
+RRF_K = 60                     # RRF smoothing constant
 
 # Evaluation K values
 EVAL_K_VALUES: list[int] = [1, 3, 5, 10, 20]
 
-# ── Document-name normalisation ─────────────────────────────────────────────
-# Maps a canonical short name → patterns (case-insensitive sub-strings) that
-# may appear in either the gold-standard ``doc_short_name`` or the evidence
-# ``document`` column.  The first matching pattern wins, so more specific
-# entries should precede generic ones.
+# Document name normalisation
+# Maps a canonical short name to patterns that
+# may appear in either the gold-standard doc_short_name 
+# or the evidence document column. The first matching pattern wins.
 
 DOC_CANONICAL_MAP: dict[str, list[str]] = {
     "ESPR":                 ["espr", "ecodesign for sustainable products"],
@@ -168,22 +149,12 @@ DOC_CANONICAL_MAP: dict[str, list[str]] = {
 
 def normalise_doc_name(raw: str) -> str:
     """Return the canonical short name for any document reference string.
-
-    Matching is case-insensitive.  Returns the original string (stripped
-    and title-cased) when no canonical pattern matches.
-
-    Parameters
-    ----------
-    raw : str
+    Parameters: raw : str
         A document name from either the gold standard or evidence CSV.
-
-    Returns
-    -------
-    str
-        Canonical short name (e.g. ``"ESPR"``, ``"WEEE"``).
+    Returns: str short name (e.g. "ESPR", "WEEE")
     """
     low = raw.lower().strip()
-    # Exact-match shortcuts for abbreviated corpus names
+    # Exact match shortcuts for abbreviated corpus names
     _EXACT: dict[str, str] = {"net": "Net-Zero", "wee": "WEEE"}
     if low in _EXACT:
         return _EXACT[low]
