@@ -77,8 +77,8 @@ LLM_QUANTIZE_4BIT = True         # saves memory with negligible quality loss
 JUDGE_QUANTIZE_4BIT = True       
 
 # Judge generation limits.
-JUDGE_MAX_NEW_TOKENS = 2048    # full per-criterion reasoning
-JUDGE_MAX_INPUT_TOKENS = 16384 # evidence + classification + system prompt fits
+JUDGE_MAX_NEW_TOKENS = 2048    
+JUDGE_MAX_INPUT_TOKENS = 16384
 
 LLM_GPU_MAX_MEMORY = "40GiB"   
 LLM_CPU_MAX_MEMORY = "64GiB"
