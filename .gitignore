@@ -2,10 +2,19 @@
 /data/gold_standard_doc_level
 /data/recommendations_whitepaper
 /outputs
-/kaggle
 /notebooks/
 /temp_oldfiles/
+
+
 #Files
+job_build_mistral.sh
+job_eval_all.sh
+job_eval_mistral.sh
+job_eval_mteb_k.sh
+job_eval_mteb_k_split.sh
+job_prompt.sh
+job_prompt_new.sh
+setup_env.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
