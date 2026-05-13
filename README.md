@@ -5,21 +5,10 @@
 Reproducible Retrieval-Augmented Generation (RAG) workflow that links sustainability recommendations to EU legislation and evaluates retrieval quality.
 
 Pipeline stages:
-1. Chunk legal evidence (EUR-Lex HTML → CSV).
-2. Build retrieval indices (embedding + BM25).
-3. Retrieve evidence and classify alignment (optionally with LLM judge).
-4. Run unified evaluation: document-level, projected chunk-level, and MTEB legal tasks.
-5. Visualise results in the notebook.
-
----
-
-## Setup
-
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+1. Chunk legal evidence (EUR-Lex HTML to CSV).
+2. Build retrieval indices (embedding and BM25).
+3. Retrieve evidence and classify alignment.
+4. Run unified evaluation
 
 ---
 
@@ -45,19 +34,8 @@ python main.py build -i outputs/evidence.csv -m e5-mistral
 
 ### 3. Retrieve and classify
 
-**Flat baseline** (BM25 + dense + RRF + reranker):
-
-```powershell
-python main.py prompt `
-  --input data/recommendations_whitepaper/recommendations_v2.csv `
-  --output outputs/prompt_results.csv `
-  --model bge-m3 `
-  --top-k 10 `
-  --rerank-top 5 `
-  --judge
-```
-
 **Split evidence retrieval** (binding law vs. policy docs retrieved separately):
+(remove retrieval mode for flat baseline)
 
 ```powershell
 python main.py prompt `
@@ -74,63 +52,30 @@ python main.py prompt `
 python main.py prompt --retrieve-only --model bge-m3
 ```
 
-**Compare classifiers** (Qwen2.5-7B vs Mistral-7B):
-
-```python
-from rag.classifier import AlignmentClassifier
-clf_qwen    = AlignmentClassifier(model_key="qwen")    # default (7B)
-clf_mistral = AlignmentClassifier(model_key="mistral") # for comparison
-```
-
 ### 4. Evaluate
 
-**Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite + ablation table):
+**Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite):
 
 ```powershell
 python main.py evaluate `
-  --models bge-m3 e5-large-v2 e5-mistral `
+  --models bge-m3 e5-large-v2 `
   --k-values 1 3 5 10 20 `
   --top-k 10
 ```
 
-**Ablation with significance stars** (adds per-query scoring + permutation-test markers):
+**Ablation** (not used):
 
 ```powershell
 python main.py evaluate `
-  --models bge-m3 e5-large-v2 e5-mistral `
+  --models bge-m3 e5-large-v2 `
   --k-values 1 3 5 10 20 `
   --top-k 10 `
   --with-robustness
 ```
 
-
+If some models have been run separately, they can be merge again (not with robounstess as it requires to run together)
 ```powershell
 python main.py merge-eval --remote-csv outputs/eval_mistral/metrics_all.csv outputs/eval_mteb_k_split/metrics_all.csv --output-dir outputs/eval_mteb_k_split_with_mistral
-```
-**Fast gold-standard-only** (no MTEB download):
-
-```powershell
-python main.py evaluate --models bge-m3 --skip-mteb
-```
-
-**Thesis study script** (Mar-17-style robust reproduction + ablation + baseline delta):
-
-```powershell
-python evaluation/full_study.py retrieval-study `
-  --models bge-m3 e5-large-v2 e5-mistral `
-  --include-splade `
-  --with-robustness-all-models `
-  --output-dir outputs/eval_thesis `
-  --old-metrics-csv outputs/eval_unified_old/metrics_all.csv
-```
-
-**K comparison (k=1,3,5,10,20) from existing metrics CSV**:
-
-```powershell
-python evaluation/full_study.py k-compare `
-  --metrics-csv outputs/eval_unified_old/metrics_all.csv `
-  --k-values 1 3 5 10 20 `
-  --output-dir outputs/eval_k_compare
 ```
 
 **Prompt/judge analysis summary export**:
@@ -141,6 +86,8 @@ python evaluation/full_study.py prompt-study `
   --judge-csv outputs/prompt_results_judge.csv `
   --output-dir outputs/eval_prompt
 ```
+
+If those are too many commands, summarizing the full pipeline can be run using these 3:
 
 **Full pipeline (evidence → indices → evaluation):**
 
@@ -160,16 +107,11 @@ python evaluation/full_study.py retrieval-study `
   --with-robustness-all-models `
   --output-dir outputs/eval_thesis
 ```
-
-### 5. Pre-download models
-
-```powershell
-python main.py download-models --embedding-models bge-m3 e5-large-v2 e5-mistral
-python main.py download-models --embedding-models bge-m3 --include-llms
-```
 ---
 
 ## CLI reference
+
+Most of these commands are not needed but were used to try different configurations and to work around computational constrains. Therefore is only a reference list in case some specific part wants to be checked.
 
 ### `build`
 | Argument | Default | Description |
@@ -195,7 +137,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 ### `evaluate`
 | Argument | Default | Description |
 |---|---|---|
-| `--models` | bge-m3 e5-large-v2 e5-mistral | Model keys to compare |
+| `--models` | bge-m3 e5-large-v2 | Model keys to compare |
 | `--gold-csv` | `data/gold_standard_doc_level/gold_standard.csv` | Gold standard path |
 | `--output-dir` | `outputs/eval_unified` | Output directory |
 | `--top-k` | `10` | Retrieval candidates |
@@ -219,7 +161,7 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | `--with-robustness` | off | Run ablation significance tests |
 | `--robust-model` | first model in `--models` | Model used for robustness stage |
 | `--robust-k` | `10` | K used for robustness stage |
-| `--rrf-k` | `60` | RRF smoothing constant for grid search (e.g. 10, 30, 60, 100) |
+| `--rrf-k` | `60` | RRF smoothing constant for grid search |
 
 ---
 
@@ -228,11 +170,11 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 | Path | Description |
 |---|---|
 | `data/evidence/` | EUR-Lex HTML files |
-| `data/gold_standard_doc_level/gold_standard.csv` | 275 document-level annotations |
-| `data/recommendations_whitepaper/recommendations_v2.csv` | Whitepaper recommendations |
+| `data/gold_standard_doc_level/gold_standard.csv` | 130 document-level annotations (private) |
+| `data/recommendations_whitepaper/recommendations_v2.csv` | Whitepaper recommendations (private) |
 | `outputs/evidence.csv` | Generated chunk file |
 
-## Outputs
+## Outputs (not public yet as part of the dataset is private)
 
 | Path | Description |
 |---|---|
@@ -257,7 +199,6 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 **Embedding models** (key → HuggingFace ID):
 - `bge-m3` → `BAAI/bge-m3`
 - `e5-large-v2` → `intfloat/e5-large-v2`
-- `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
 
 **LLM classifiers**:
 - `qwen` → `Qwen/Qwen2.5-7B-Instruct` (default)
@@ -267,7 +208,6 @@ python main.py download-models --embedding-models bge-m3 --include-llms
 ---
 
 ## File structure
-
 ```
 main.py                          top-level CLI entry point
 pipeline.py                      argparse CLI definitions
@@ -304,15 +244,14 @@ evaluation/
   full_study.py                  thesis full-study CLI (retrieval-study, prompt-study, k-compare)
   evaluation.py                  core evaluation logic (gold standard loader, per-query scoring)
   full_eval.py                   ablation table, significance markers, report formatting
-  metrics.py                     Hit@k, Recall, MRR, NDCG, bootstrap CI, permutation test
+  metrics.py                     Hit@k, Recall, MRR, NDCG, bootstrap CI, permutation test (not all in use)
 
 rag/
-  classifier.py                  AlignmentClassifier (Qwen / Mistral)
-  llm_judge.py                   LLMJudge (LLM-as-judge evaluation)
+  classifier.py                  Alignment classifier
+  llm_judge.py                   LLM judge
   prompts.py                     prompt templates
 
 notebooks/                       analysis and visualisation
 outputs/                         generated artifacts (indices, results, eval)
 data/                            evidence HTML, gold standard, recommendations
-docs/                            CLI reference and pipeline walkthroughs
 ```
