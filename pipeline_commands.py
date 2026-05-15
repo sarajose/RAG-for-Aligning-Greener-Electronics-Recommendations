@@ -8,7 +8,7 @@ from typing import Any
 from config import DEFAULT_MODEL_KEY, EVIDENCE_CSV, GOLD_STANDARD_CSV, INDEX_DIR, WHITEPAPER_RECOMMENDATIONS_CSV
 from data_models import ClassificationResult
 from embedding_indexing import build_index, build_merged_index
-from evaluation.experiment_commands import (
+from evaluation.commands import (
     cmd_download_models,
     cmd_merge_eval,
     cmd_robustness,

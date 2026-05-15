@@ -1,4 +1,4 @@
-﻿"""CLI command handlers for evaluation workflows (thin entrypoints)."""
+"""CLI command handlers for evaluation workflows."""
 
 from __future__ import annotations
 
@@ -8,15 +8,17 @@ from pathlib import Path
 import pandas as pd
 
 from config import EMBEDDING_MODELS, JUDGE_MODEL, LLM_MODEL, RERANKER_MODEL
-from evaluation.full_eval import build_ablation_table, format_ablation_report
-from evaluation.experiment_helpers import _build_metrics_summary_tables
-from evaluation.experiment_unified import cmd_unified_eval
-from evaluation.experiment_robustness import cmd_robustness
+from evaluation.evaluation import _build_metrics_summary_tables, build_ablation_table, format_ablation_report
+from evaluation.retrieval_eval import cmd_unified_eval
+from evaluation.robustness import cmd_robustness
+
+# Re-export so callers can import both from here.
+__all__ = ["cmd_unified_eval", "cmd_robustness", "cmd_merge_eval", "cmd_download_models"]
+
 
 def cmd_merge_eval(args: argparse.Namespace) -> None:
     """Merge one or more remote metrics CSVs into local unified outputs."""
     args.output_dir.mkdir(parents=True, exist_ok=True)
-
     local_metrics_csv = args.output_dir / "metrics_all.csv"
     frames: list[pd.DataFrame] = []
 
@@ -64,18 +66,14 @@ def cmd_merge_eval(args: argparse.Namespace) -> None:
     summary_k_df.to_csv(summary_csv, index=False)
     comparison_k_df.to_csv(comparison_csv, index=False)
 
-    interpretation_lines: list[str] = [
-        f"Unified Evaluation Interpretation (k={ranking_k})",
-        "",
-        f"Total result rows: {len(summary_k_df)}",
-        "Top systems by dataset/level (NDCG):",
+    interpretation_lines = [
+        f"Unified Evaluation Interpretation (k={ranking_k})", "",
+        f"Total result rows: {len(summary_k_df)}", "Top systems by dataset/level (NDCG):",
     ]
-    top_by_group = (
+    for _, row in (
         summary_k_df.sort_values("ndcg", ascending=False)
-        .groupby(["dataset", "level"], as_index=False)
-        .first()
-    )
-    for _, row in top_by_group.iterrows():
+        .groupby(["dataset", "level"], as_index=False).first().iterrows()
+    ):
         interpretation_lines.append(
             f"- {row['dataset']} | {row['level']}: {row['model_key']} + {row['method']} "
             f"(NDCG={row['ndcg']:.4f}, MRR={row['mrr']:.4f}, Hit={row['hit_rate']:.4f})"
@@ -99,7 +97,7 @@ def cmd_merge_eval(args: argparse.Namespace) -> None:
 
 
 def cmd_download_models(args: argparse.Namespace) -> None:
-    """Pre-download embedding/reranker/LLM models."""
+    """Pre-download embedding, reranker, and LLM models."""
     from sentence_transformers import CrossEncoder, SentenceTransformer
     from transformers import AutoModelForCausalLM, AutoTokenizer
 

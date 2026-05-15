@@ -33,7 +33,7 @@ from config import (
     GOLD_STANDARD_CSV,
     OUTPUT_DIR,
 )
-from evaluation.experiment_commands import cmd_robustness, cmd_unified_eval
+from evaluation.commands import cmd_robustness, cmd_unified_eval
 
 DEFAULT_BASELINE_MODELS = ["bge-m3", "e5-large-v2", "e5-mistral"]
 DEFAULT_K_VALUES = [1, 3, 5, 10, 20]

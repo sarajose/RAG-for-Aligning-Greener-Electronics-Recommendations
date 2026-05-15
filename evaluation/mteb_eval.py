@@ -1,4 +1,8 @@
-"""MTEB dataset loading and chunk-level evaluation helpers."""
+"""MTEB dataset loading and chunk-level evaluation helpers.
+
+Handles building in-memory retrievers over the MuPLeR corpus and running
+chunk-level retrieval evaluation against MTEB qrels.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +20,7 @@ import faiss
 from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, OUTPUT_DIR
 from data_models import Chunk
 from embedding_indexing import build_faiss_index, embed_texts, get_embed_model, tokenize
-from evaluation.experiment_helpers import _log_progress, _safe_retrieve, _ts
-from evaluation.metrics import compute_retrieval_metrics
+from evaluation.evaluation import _log_progress, _safe_retrieve, _ts, compute_retrieval_metrics
 from retrieval.bm25_retriever import BM25Retriever
 from retrieval.dense_retriever import DenseRetriever
 from retrieval.reranker import RerankedRetriever, Reranker
@@ -34,12 +37,7 @@ def _mteb_cache_paths(
     """Return deterministic cache paths for MTEB dense artifacts."""
     cache_root = OUTPUT_DIR / "mteb_cache"
     cache_root.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "model_key": model_key,
-        "dataset_id": str(dataset_id),
-        "max_corpus": max_corpus,
-    }
+    payload = {"model_key": model_key, "dataset_id": str(dataset_id), "max_corpus": max_corpus}
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:12]
     stem = f"{model_key}_{digest}"
     return (
@@ -56,7 +54,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: float = 0.1) -> None:
-    """Atomically replace `path` with `tmp`, with short retries for Windows file-lock races."""
+    """Atomically replace `path` with `tmp`, retrying on Windows file-lock races."""
     last_exc: Exception | None = None
     current_tmp = tmp
     for attempt in range(retries):
@@ -64,10 +62,8 @@ def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: f
             current_tmp.replace(path)
             return
         except FileNotFoundError as exc:
-            # If the target already exists, another writer likely won the race.
             if path.exists():
                 return
-            # Guard against historical NumPy temp naming (".tmp.npy") leftovers.
             alt_tmp = Path(str(current_tmp) + ".npy")
             if alt_tmp.exists():
                 current_tmp = alt_tmp
@@ -76,23 +72,19 @@ def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: f
         except PermissionError as exc:
             last_exc = exc
         time.sleep(base_delay_s * (attempt + 1))
-
     if last_exc is not None:
         raise last_exc
 
 
 def _cleanup_stale_temp_files(path: Path) -> None:
-    """Remove stale temp siblings for a cache artifact without failing the run."""
     try:
         for candidate in path.parent.glob(f"{path.name}.*.tmp*"):
             candidate.unlink(missing_ok=True)
     except Exception:
-        # Best-effort cleanup only.
         pass
 
 
 def _recover_legacy_npy_tmp(path: Path) -> bool:
-    """Promote historical '*.tmp.npy' leftovers into the final cache path if possible."""
     legacy = Path(str(path) + ".tmp.npy")
     if not legacy.exists():
         return False
@@ -106,8 +98,6 @@ def _recover_legacy_npy_tmp(path: Path) -> bool:
 def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     _cleanup_stale_temp_files(path)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
-    # Write through a file handle so NumPy does not auto-append ".npy"
-    # to the temporary filename, which breaks atomic rename on Windows.
     with tmp.open("wb") as f:
         np.save(f, array)
         f.flush()
@@ -120,10 +110,7 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
 
     def _local_candidates(root: Path, name: str):
         seen: set[str] = set()
-        config_aliases = [name]
-        if name == "qrels":
-            config_aliases.append("default")
-
+        config_aliases = [name] + (["default"] if name == "qrels" else [])
         for alias in config_aliases + [""]:
             base = root / alias if alias else root
             if not base.exists() or not base.is_dir():
@@ -132,7 +119,6 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
             if key not in seen:
                 seen.add(key)
                 yield base
-
             for version_dir in base.iterdir():
                 if not version_dir.is_dir():
                     continue
@@ -140,10 +126,9 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
                     if not hash_dir.is_dir():
                         continue
                     hash_key = str(hash_dir.resolve())
-                    if hash_key in seen:
-                        continue
-                    seen.add(hash_key)
-                    yield hash_dir
+                    if hash_key not in seen:
+                        seen.add(hash_key)
+                        yield hash_dir
 
     ds_path = Path(dataset_id)
     if ds_path.exists() and ds_path.is_dir():
@@ -152,10 +137,8 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
                 local_obj = load_from_disk(str(candidate))
             except Exception:
                 continue
-
             if hasattr(local_obj, "column_names"):
                 return local_obj
-
             if split_name in local_obj:
                 return local_obj[split_name]
             if config_name in local_obj:
@@ -165,10 +148,8 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
             first_key = next(iter(local_obj.keys()), None)
             if first_key is not None:
                 return local_obj[first_key]
-
         raise RuntimeError(
-            f"Could not load local dataset split '{split_name}' from '{dataset_id}'. "
-            "Expected either a Dataset/DatasetDict at the root or subfolders named corpus/queries/qrels."
+            f"Could not load local dataset split '{split_name}' from '{dataset_id}'."
         )
 
     try:
@@ -189,20 +170,10 @@ def _build_mteb_chunks(corpus_ds, max_corpus: int | None) -> tuple[list[Chunk], 
         merged = f"{title}\n{text}".strip()
         if not merged:
             continue
-        chunks.append(
-            Chunk(
-                id=doc_id,
-                document="MTEB-Legal",
-                source_file="mteb_legal",
-                version="v1",
-                chapter="",
-                article="",
-                article_subtitle="",
-                paragraph="",
-                char_offset=0,
-                text=merged,
-            )
-        )
+        chunks.append(Chunk(
+            id=doc_id, document="MTEB-Legal", source_file="mteb_legal", version="v1",
+            chapter="", article="", article_subtitle="", paragraph="", char_offset=0, text=merged,
+        ))
         texts.append(merged)
     return chunks, texts
 
@@ -227,10 +198,7 @@ def _load_mteb_queries_qrels(
 
     if duplicate_query_ids:
         dup_preview = ", ".join(sorted(duplicate_query_ids)[:10])
-        raise RuntimeError(
-            "Duplicate query IDs detected in MTEB query split; cannot guarantee paired evaluation. "
-            f"Examples: {dup_preview}"
-        )
+        raise RuntimeError(f"Duplicate query IDs in MTEB query split. Examples: {dup_preview}")
 
     relevant_by_query: dict[str, set[str]] = {}
     for row in qrels_ds:
@@ -256,10 +224,9 @@ def _evaluate_mteb_chunk_level(
     method: str,
     out_retrieved_csv: Path | None,
 ) -> dict[int, object]:
+    """Evaluate chunk-level retrieval on the MTEB corpus."""
     start_ts = time.perf_counter()
-    _log_progress(
-        f"START eval: model={model_key}, method={method}, dataset={dataset_id}, split={split_name}"
-    )
+    _log_progress(f"START eval: model={model_key}, method={method}, dataset={dataset_id}, split={split_name}")
     _log_progress("Loading corpus split...")
     corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building in-memory chunks from corpus...")
@@ -275,16 +242,13 @@ def _evaluate_mteb_chunk_level(
     }
     filtered_qrels = {qid: rels for qid, rels in filtered_qrels.items() if rels and qid in queries}
     ordered_qids = sorted(filtered_qrels.keys())
-    _log_progress(
-        f"Prepared {len(ordered_qids)} valid queries with positive qrels (from {len(queries)} total queries)."
-    )
+    _log_progress(f"Prepared {len(ordered_qids)} valid queries with positive qrels (from {len(queries)} total).")
 
     if not ordered_qids:
-        raise RuntimeError("No valid MTEB qrels after filtering. Try --max-corpus none.")
+        raise RuntimeError("No valid MTEB qrels after filtering. Try max_corpus=None.")
 
     max_k = max(k_values)
     n_retrieve = max(max_k * 3, top_k, 30)
-
     all_retrieved: list[list[str]] = []
     all_relevant: list[set[str]] = []
     rows: list[dict] = []
@@ -295,7 +259,6 @@ def _evaluate_mteb_chunk_level(
         query = queries[qid]
         result = _safe_retrieve(retriever, query, top_k=n_retrieve)
         ranked_ids = [c.id for c in result.ranked_chunks]
-
         all_retrieved.append(ranked_ids)
         all_relevant.append(filtered_qrels[qid])
 
@@ -303,30 +266,16 @@ def _evaluate_mteb_chunk_level(
             elapsed = time.perf_counter() - loop_start_ts
             qps = idx / elapsed if elapsed > 0 else 0.0
             remaining = len(ordered_qids) - idx
-            eta_s = int(remaining / qps) if qps > 0 else -1
-            eta_txt = "unknown" if eta_s < 0 else f"~{eta_s}s"
-            _log_progress(
-                f"{idx}/{len(ordered_qids)} queries processed for {model_key}|{method} "
-                f"({qps:.2f} q/s, ETA {eta_txt})"
-            )
+            eta_txt = f"~{int(remaining / qps)}s" if qps > 0 else "unknown"
+            _log_progress(f"{idx}/{len(ordered_qids)} queries for {model_key}|{method} ({qps:.2f} q/s, ETA {eta_txt})")
 
         if out_retrieved_csv is not None:
-            for rank, (chunk, score) in enumerate(
-                zip(result.ranked_chunks[:top_k], result.scores[:top_k]), start=1
-            ):
-                rows.append(
-                    {
-                        "dataset": "mteb_legal",
-                        "model_key": model_key,
-                        "method": method,
-                        "query_id": qid,
-                        "query": query,
-                        "rank": rank,
-                        "score": float(score),
-                        "chunk_id": chunk.id,
-                        "text": chunk.text,
-                    }
-                )
+            for rank, (chunk, score) in enumerate(zip(result.ranked_chunks[:top_k], result.scores[:top_k]), start=1):
+                rows.append({
+                    "dataset": "mteb_legal", "model_key": model_key, "method": method,
+                    "query_id": qid, "query": query, "rank": rank, "score": float(score),
+                    "chunk_id": chunk.id, "text": chunk.text,
+                })
 
     if out_retrieved_csv is not None:
         out_retrieved_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -334,14 +283,9 @@ def _evaluate_mteb_chunk_level(
         pd.DataFrame(rows).to_csv(out_retrieved_csv, index=False)
 
     total_elapsed = time.perf_counter() - start_ts
-    _log_progress(
-        f"DONE eval: model={model_key}, method={method}, queries={len(ordered_qids)}, elapsed={total_elapsed:.1f}s"
-    )
+    _log_progress(f"DONE eval: model={model_key}, method={method}, queries={len(ordered_qids)}, elapsed={total_elapsed:.1f}s")
 
-    return {
-        k: compute_retrieval_metrics(all_retrieved, all_relevant, k)
-        for k in sorted(set(k_values))
-    }
+    return {k: compute_retrieval_metrics(all_retrieved, all_relevant, k) for k in sorted(set(k_values))}
 
 
 def _build_mteb_retriever(
@@ -354,6 +298,7 @@ def _build_mteb_retriever(
     embed_device: str | None = None,
     embed_precision: str = "float32",
 ):
+    """Build an in-memory retriever over the MTEB corpus for a given method."""
     from rank_bm25 import BM25Okapi
 
     start_ts = time.perf_counter()
@@ -363,14 +308,13 @@ def _build_mteb_retriever(
     _log_progress(f"Preparing retriever method={method} for model={model_key}, dataset={dataset_id}")
     _log_progress("Loading corpus split for retriever build...")
     corpus_ds = _load_split(dataset_id, "en-corpus", "test")
-    _log_progress("Building MTEB chunks/texts for retriever build...")
+    _log_progress("Building MTEB chunks/texts...")
     chunks, texts = _build_mteb_chunks(corpus_ds, max_corpus)
     _log_progress(f"Tokenizing and building BM25 over {len(texts)} texts...")
-
     bm25 = BM25Okapi([tokenize(t) for t in texts])
 
     if base_method == "bm25":
-        base: BM25Retriever | DenseRetriever | HybridRetriever = BM25Retriever(bm25, chunks)
+        base = BM25Retriever(bm25, chunks)
         _log_progress(f"BM25 retriever ready ({time.perf_counter() - start_ts:.1f}s).")
         if use_rerank and reranker is not None:
             return RerankedRetriever(base, reranker, initial_k=max(DEFAULT_TOP_K * 2, 30), final_k=DEFAULT_RERANK_TOP)
@@ -379,9 +323,7 @@ def _build_mteb_retriever(
     _log_progress(f"Loading embedding model {model_key}...")
     embed_model = get_embed_model(model_key)
     emb_cache_path, faiss_cache_path, meta_cache_path = _mteb_cache_paths(
-        model_key=model_key,
-        dataset_id=dataset_id,
-        max_corpus=max_corpus,
+        model_key=model_key, dataset_id=dataset_id, max_corpus=max_corpus,
     )
 
     _recover_legacy_npy_tmp(emb_cache_path)
@@ -392,39 +334,30 @@ def _build_mteb_retriever(
         try:
             embeddings = np.load(emb_cache_path)
             if embeddings.ndim != 2 or embeddings.shape[0] != len(texts):
-                _log_progress("Cached embeddings shape mismatch; rebuilding embeddings cache...")
+                _log_progress("Cached embeddings shape mismatch; rebuilding...")
                 emb_cache_path.unlink(missing_ok=True)
                 embeddings = None  # type: ignore[assignment]
             else:
                 _log_progress(f"Loaded cached embeddings in {time.perf_counter() - load_start:.1f}s.")
         except Exception as exc:
-            _log_progress(f"Cached embeddings invalid/corrupt ({exc}); rebuilding embeddings cache...")
+            _log_progress(f"Cached embeddings invalid ({exc}); rebuilding...")
             emb_cache_path.unlink(missing_ok=True)
             embeddings = None  # type: ignore[assignment]
     else:
         embeddings = None  # type: ignore[assignment]
 
     if embeddings is None:
-        _log_progress(
-            f"Embedding {len(texts)} corpus texts (this can take a while) "
-            f"with batch_size={embed_batch_size}..."
-        )
+        _log_progress(f"Embedding {len(texts)} corpus texts with batch_size={embed_batch_size}...")
         embed_start_ts = time.perf_counter()
         embeddings = embed_texts(
-            texts,
-            embed_model,
-            batch_size=embed_batch_size,
-            show_progress=True,
-            device=embed_device,
-            precision=embed_precision,
-            allow_cpu_fallback=True,
+            texts, embed_model, batch_size=embed_batch_size, show_progress=True,
+            device=embed_device, precision=embed_precision, allow_cpu_fallback=True,
         )
         _log_progress(f"Embeddings ready in {time.perf_counter() - embed_start_ts:.1f}s.")
         _log_progress(f"Saving embeddings cache -> {emb_cache_path}")
         _atomic_save_npy(emb_cache_path, embeddings)
 
-    # For MTEB corpus sizes (10k-20k), FlatIP builds much faster than HNSW
-    # and gives exact neighbors, avoiding long HNSW construction stalls.
+    # FlatIP (exact search) is faster to build than HNSW for MTEB corpus sizes (10k-100k)
     if faiss_cache_path.exists():
         _log_progress(f"Loading cached FAISS index from {faiss_cache_path}...")
         faiss_start_ts = time.perf_counter()
@@ -433,74 +366,43 @@ def _build_mteb_retriever(
             if int(getattr(faiss_index, "d", 0)) <= 0:
                 raise RuntimeError("Cached FAISS index has invalid dimension")
             if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
-                raise RuntimeError(
-                    f"Cached FAISS ntotal mismatch: ntotal={int(getattr(faiss_index, 'ntotal', -1))}, "
-                    f"chunks={len(chunks)}"
-                )
+                raise RuntimeError(f"Cached FAISS ntotal mismatch: {int(getattr(faiss_index, 'ntotal', -1))} vs {len(chunks)}")
             _log_progress(f"FAISS index loaded in {time.perf_counter() - faiss_start_ts:.1f}s.")
         except Exception as exc:
-            _log_progress(f"Cached FAISS invalid/corrupt ({exc}); rebuilding cache...")
+            _log_progress(f"Cached FAISS invalid ({exc}); rebuilding...")
             faiss_cache_path.unlink(missing_ok=True)
-            _log_progress("Building FAISS index (FlatIP/exact)...")
-            faiss_start_ts = time.perf_counter()
-            faiss_index = build_faiss_index(embeddings, use_hnsw=False)
-            if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
-                raise RuntimeError(
-                    "Built FAISS index size mismatch: "
-                    f"ntotal={int(getattr(faiss_index, 'ntotal', -1))}, chunks={len(chunks)}"
-                )
-            _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
-            _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
-            _cleanup_stale_temp_files(faiss_cache_path)
-            tmp_faiss = faiss_cache_path.with_name(
-                f"{faiss_cache_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp"
-            )
-            faiss.write_index(faiss_index, str(tmp_faiss))
-            _replace_with_retry(tmp_faiss, faiss_cache_path)
+            faiss_index = _build_and_cache_faiss(embeddings, chunks, faiss_cache_path)
     else:
-        _log_progress("Building FAISS index (FlatIP/exact)...")
-        faiss_start_ts = time.perf_counter()
-        faiss_index = build_faiss_index(embeddings, use_hnsw=False)
-        if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
-            raise RuntimeError(
-                "Built FAISS index size mismatch: "
-                f"ntotal={int(getattr(faiss_index, 'ntotal', -1))}, chunks={len(chunks)}"
-            )
-        _log_progress(f"FAISS index built in {time.perf_counter() - faiss_start_ts:.1f}s.")
-        _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
-        _cleanup_stale_temp_files(faiss_cache_path)
-        tmp_faiss = faiss_cache_path.with_name(
-            f"{faiss_cache_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp"
-        )
-        faiss.write_index(faiss_index, str(tmp_faiss))
-        _replace_with_retry(tmp_faiss, faiss_cache_path)
+        faiss_index = _build_and_cache_faiss(embeddings, chunks, faiss_cache_path)
 
-    _atomic_write_json(
-        meta_cache_path,
-        {
-            "model_key": model_key,
-            "dataset_id": dataset_id,
-            "max_corpus": max_corpus,
-            "n_texts": len(texts),
-            "embedding_shape": list(embeddings.shape),
-            "embeddings_path": str(emb_cache_path),
-            "faiss_path": str(faiss_cache_path),
-        },
-    )
-    if base_method == "dense":
-        base = DenseRetriever(faiss_index, chunks, embed_model)
-    else:  # rrf
-        base = HybridRetriever(faiss_index, bm25, chunks, embed_model)
+    _atomic_write_json(meta_cache_path, {
+        "model_key": model_key, "dataset_id": dataset_id, "max_corpus": max_corpus,
+        "n_texts": len(texts), "embedding_shape": list(embeddings.shape),
+        "embeddings_path": str(emb_cache_path), "faiss_path": str(faiss_cache_path),
+    })
+
+    base = DenseRetriever(faiss_index, chunks, embed_model) if base_method == "dense" else HybridRetriever(faiss_index, bm25, chunks, embed_model)
     _log_progress(f"Retriever ({method}) ready (total build: {time.perf_counter() - start_ts:.1f}s).")
 
     if use_rerank and reranker is not None:
-        return RerankedRetriever(
-            base,
-            reranker,
-            initial_k=max(DEFAULT_TOP_K * 2, 30),
-            final_k=DEFAULT_RERANK_TOP,
-        )
+        return RerankedRetriever(base, reranker, initial_k=max(DEFAULT_TOP_K * 2, 30), final_k=DEFAULT_RERANK_TOP)
     return base
+
+
+def _build_and_cache_faiss(embeddings: np.ndarray, chunks: list, faiss_cache_path: Path):
+    """Build a FlatIP FAISS index and cache it atomically."""
+    _log_progress("Building FAISS index (FlatIP/exact)...")
+    start_ts = time.perf_counter()
+    faiss_index = build_faiss_index(embeddings, use_hnsw=False)
+    if int(getattr(faiss_index, "ntotal", -1)) != len(chunks):
+        raise RuntimeError(f"Built FAISS index size mismatch: {int(getattr(faiss_index, 'ntotal', -1))} vs {len(chunks)}")
+    _log_progress(f"FAISS index built in {time.perf_counter() - start_ts:.1f}s.")
+    _log_progress(f"Saving FAISS cache -> {faiss_cache_path}")
+    _cleanup_stale_temp_files(faiss_cache_path)
+    tmp_faiss = faiss_cache_path.with_name(f"{faiss_cache_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
+    faiss.write_index(faiss_index, str(tmp_faiss))
+    _replace_with_retry(tmp_faiss, faiss_cache_path)
+    return faiss_index
 
 
 def _build_mteb_splade_retriever(
@@ -510,14 +412,11 @@ def _build_mteb_splade_retriever(
     model_name: str,
     max_length: int,
 ):
+    """Build a SPLADE retriever over the full MTEB corpus."""
     _log_progress(f"Preparing SPLADE retriever for dataset={dataset_id}, model={model_name}")
     _log_progress("Loading corpus split for SPLADE retriever...")
     corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building MTEB chunks for SPLADE retriever...")
     chunks, _ = _build_mteb_chunks(corpus_ds, max_corpus)
     _log_progress(f"Building SPLADE index for {len(chunks)} chunks (this can take a while)...")
-    return SPLADERetriever.from_chunks(
-        chunks,
-        model_name=model_name,
-        max_length=max_length,
-    )
+    return SPLADERetriever.from_chunks(chunks, model_name=model_name, max_length=max_length)
