@@ -5,13 +5,12 @@ import gc
 from pathlib import Path
 from typing import Any
 
-from config import DEFAULT_MODEL_KEY, EVIDENCE_CSV, GOLD_STANDARD_CSV, INDEX_DIR, WHITEPAPER_RECOMMENDATIONS_CSV
+from config import EVIDENCE_CSV, GOLD_STANDARD_CSV, INDEX_DIR, WHITEPAPER_RECOMMENDATIONS_CSV
 from data_models import ClassificationResult
 from embedding_indexing import build_index, build_merged_index
 from evaluation.commands import (
     cmd_download_models,
     cmd_merge_eval,
-    cmd_robustness,
     cmd_unified_eval,
 )
 from pipeline_io import (
@@ -124,19 +123,6 @@ def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[Classif
     return cls_results
 
 
-def _build_robustness_args(args: argparse.Namespace, robust_model: str) -> argparse.Namespace:
-    """Construct arguments for robustness sub-command."""
-    return argparse.Namespace(
-        model=robust_model,
-        gold_csv=Path(GOLD_STANDARD_CSV),
-        k=10,
-        top_k=args.top_k,
-        rerank_top=args.rerank_top,
-        output_dir=Path(args.output_dir) / "robustness",
-        skip_reranker=False,
-    )
-
-
 def cmd_build(args: argparse.Namespace) -> None:
     """Build index artifacts for one or more evidence CSV inputs."""
     for input_path in args.input:
@@ -204,18 +190,10 @@ def cmd_prompt(args: argparse.Namespace) -> None:
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
-    """Run unified retrieval evaluation and optional robustness analysis."""
+    """Run unified retrieval evaluation."""
     _require_file(GOLD_STANDARD_CSV, "gold-standard CSV")
     _require_file(WHITEPAPER_RECOMMENDATIONS_CSV, "whitepaper recommendations CSV")
     _require_file(Path(args.evidence_csv), "evidence CSV for auto-build")
 
     print(f"[evaluate] Unified outputs directory: {args.output_dir}")
-
     cmd_unified_eval(args)
-
-    if not args.with_robustness:
-        return
-
-    robust_model = args.models[0] if args.models else DEFAULT_MODEL_KEY
-    robust_args = _build_robustness_args(args, robust_model)
-    cmd_robustness(robust_args)

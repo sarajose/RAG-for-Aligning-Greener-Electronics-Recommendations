@@ -8,16 +8,13 @@ from pathlib import Path
 import pandas as pd
 
 from config import EMBEDDING_MODELS, JUDGE_MODEL, LLM_MODEL, RERANKER_MODEL
-from evaluation.evaluation import _build_metrics_summary_tables, build_ablation_table, format_ablation_report
 from evaluation.retrieval_eval import cmd_unified_eval
-from evaluation.robustness import cmd_robustness
 
-# Re-export so callers can import both from here.
-__all__ = ["cmd_unified_eval", "cmd_robustness", "cmd_merge_eval", "cmd_download_models"]
+__all__ = ["cmd_unified_eval", "cmd_merge_eval", "cmd_download_models"]
 
 
 def cmd_merge_eval(args: argparse.Namespace) -> None:
-    """Merge one or more remote metrics CSVs into local unified outputs."""
+    """Merge one or more remote metrics CSVs into the local metrics_all.csv."""
     args.output_dir.mkdir(parents=True, exist_ok=True)
     local_metrics_csv = args.output_dir / "metrics_all.csv"
     frames: list[pd.DataFrame] = []
@@ -46,54 +43,8 @@ def cmd_merge_eval(args: argparse.Namespace) -> None:
     metrics_df = metrics_df.drop_duplicates(subset=dedup_keys, keep="last").reset_index(drop=True)
     metrics_df.to_csv(local_metrics_csv, index=False)
 
-    ranking_k = int(getattr(args, "ranking_k", 10))
-    ranking_source = metrics_df[metrics_df["k"] == ranking_k]
-    if ranking_source.empty:
-        ranking_k = int(metrics_df["k"].max())
-        ranking_source = metrics_df[metrics_df["k"] == ranking_k]
-
-    ranking_df = (
-        ranking_source
-        .sort_values(["dataset", "level", "ndcg"], ascending=[True, True, False])
-        .reset_index(drop=True)
-    )
-    ranking_csv = args.output_dir / "ranking_k10.csv"
-    ranking_df.to_csv(ranking_csv, index=False)
-
-    summary_k_df, comparison_k_df = _build_metrics_summary_tables(metrics_df, k_for_summary=ranking_k)
-    summary_csv = args.output_dir / "metrics_summary_k10.csv"
-    comparison_csv = args.output_dir / "comparison_k10.csv"
-    summary_k_df.to_csv(summary_csv, index=False)
-    comparison_k_df.to_csv(comparison_csv, index=False)
-
-    interpretation_lines = [
-        f"Unified Evaluation Interpretation (k={ranking_k})", "",
-        f"Total result rows: {len(summary_k_df)}", "Top systems by dataset/level (NDCG):",
-    ]
-    for _, row in (
-        summary_k_df.sort_values("ndcg", ascending=False)
-        .groupby(["dataset", "level"], as_index=False).first().iterrows()
-    ):
-        interpretation_lines.append(
-            f"- {row['dataset']} | {row['level']}: {row['model_key']} + {row['method']} "
-            f"(NDCG={row['ndcg']:.4f}, MRR={row['mrr']:.4f}, Hit={row['hit_rate']:.4f})"
-        )
-    interpretation_txt = args.output_dir / "interpretation_k10.txt"
-    interpretation_txt.write_text("\n".join(interpretation_lines) + "\n", encoding="utf-8")
-
-    try:
-        ablation_df = build_ablation_table(local_metrics_csv, k=ranking_k)
-        ablation_csv = args.output_dir / "ablation_table.csv"
-        ablation_txt = args.output_dir / "ablation_table.txt"
-        ablation_df.to_csv(ablation_csv)
-        ablation_txt.write_text(format_ablation_report(ablation_df, k=ranking_k), encoding="utf-8")
-    except Exception as exc:
-        print(f"[warn] Could not regenerate ablation artifacts during merge: {exc}")
-
     print("\n[done] Merged evaluation metrics.")
     print(f"[done] Metrics: {local_metrics_csv}")
-    print(f"[done] Ranking: {ranking_csv}")
-    print(f"[done] Summary: {summary_csv}")
 
 
 def cmd_download_models(args: argparse.Namespace) -> None:
