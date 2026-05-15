@@ -27,6 +27,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import (
+    EVIDENCE_MAX_CHARS_PER_CHUNK,
+    JUDGE_MAX_INPUT_TOKENS,
     JUDGE_MAX_NEW_TOKENS,
     JUDGE_MODEL,
     JUDGE_QUANTIZE_4BIT,
@@ -42,9 +44,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
 # Reasoning models (e.g. SmolLM3) emit a <think>…</think> block before JSON.
-# That block alone is typically 300-800 tokens; the JSON output adds ~150.
-# 1024 ensures the model can finish both the thinking block and the JSON.
-_JUDGE_MIN_NEW_TOKENS = 1024
+# The per-criterion reasoning is now longer; 1536 ensures the model can finish
+# both any thinking block and the full reasoning JSON.
+_JUDGE_MIN_NEW_TOKENS = 1536
 
 
 @dataclass
@@ -192,7 +194,7 @@ class LLMJudge:
         quantize_4bit: bool = JUDGE_QUANTIZE_4BIT,
         device_map: str = "auto",
         max_new_tokens: int = JUDGE_MAX_NEW_TOKENS,
-        max_input_tokens: int = 4096,
+        max_input_tokens: int = JUDGE_MAX_INPUT_TOKENS,
         offload_folder: Path = LLM_OFFLOAD_DIR / "judge",
     ) -> None:
         self.model_name = model_name
@@ -304,14 +306,13 @@ class LLMJudge:
         -------
         JudgeResult
         """
-        # Keep judge prompts compact to avoid GPU memory spikes.
-        judge_chunks = [Chunk(**{**c.to_dict(), "article_text": ""}) for c in classification.retrieved_chunks]
         messages = build_judge_messages(
             recommendation=classification.recommendation,
-            chunks=judge_chunks,
+            chunks=classification.retrieved_chunks,
             label=classification.label,
-            justification=classification.justification[:2000],
+            justification=classification.justification[:6000],
             cited_chunk_ids=classification.cited_chunk_ids,
+            max_chars_per_chunk=EVIDENCE_MAX_CHARS_PER_CHUNK,
         )
         raw = self._generate(messages)
         parsed = _parse_judge_response(raw)
@@ -322,6 +323,8 @@ class LLMJudge:
             retry_messages = build_judge_retry_messages(
                 label=classification.label,
                 justification=classification.justification,
+                recommendation=classification.recommendation,
+                chunks=classification.retrieved_chunks,
             )
             raw = self._generate(retry_messages)
             parsed = _parse_judge_response(raw)
@@ -341,22 +344,39 @@ class LLMJudge:
     def evaluate_batch(
         self,
         classifications: list[ClassificationResult],
+        output_path: "Path | None" = None,
     ) -> list[JudgeResult]:
         """Evaluate a batch of classifications.
 
         Parameters
         ----------
         classifications : list[ClassificationResult]
+        output_path : Path, optional
+            If given, each result is appended to CSV immediately after evaluation
+            so partial results survive crashes or job timeouts.
 
         Returns
         -------
         list[JudgeResult]
         """
+        from pathlib import Path as _Path
+        from pipeline_io import append_judge_result_csv
+
         results: list[JudgeResult] = []
         for i, cls_result in enumerate(classifications, 1):
             print(f"  [judge {i}/{len(classifications)}] "
                   f"{cls_result.recommendation[:60]}…")
-            results.append(self.evaluate(cls_result))
+            try:
+                result = self.evaluate(cls_result)
+                results.append(result)
+                if output_path is not None:
+                    append_judge_result_csv(result, _Path(output_path))
+            except Exception as exc:
+                logger.error(
+                    "Judge failed for recommendation %d/%d (%s): %s",
+                    i, len(classifications), cls_result.recommendation[:60], exc,
+                )
+                print(f"  [judge] ERROR on item {i} — skipping. {exc}")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         return results

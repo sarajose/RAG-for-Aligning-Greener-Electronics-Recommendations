@@ -78,6 +78,7 @@ def _retrieve_all(
     retrieval_mode: str,
     max_chunks_per_doc: int,
     near_dup_suppression: bool,
+    inner_retrieval_method: str = "rrf",
 ) -> list[Any]:
     """Run retrieval for all recommendations with consistent progress output."""
     results: list[Any] = []
@@ -91,6 +92,7 @@ def _retrieve_all(
                 retrieval_mode=retrieval_mode,
                 max_chunks_per_doc=max_chunks_per_doc,
                 near_dup_suppression=near_dup_suppression,
+                inner_retrieval_method=inner_retrieval_method,
             )
         )
         _print_progress("retrieve", idx, total)
@@ -118,7 +120,7 @@ def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[Classif
     cls_results: list[ClassificationResult] = []
     total = len(recs)
     for idx, (rec, retrieval) in enumerate(zip(recs, retrieval_results), start=1):
-        cls_results.append(classifier.classify(rec.text, retrieval.ranked_chunks))
+        cls_results.append(classifier.classify(rec.text, retrieval.ranked_chunks, title=rec.title))
         _print_progress("classify", idx, total)
     del classifier
     _free_gpu("after classifier")
@@ -171,6 +173,7 @@ def cmd_prompt(args: argparse.Namespace) -> None:
         retrieval_mode=args.retrieval_mode,
         max_chunks_per_doc=args.max_chunks_per_doc,
         near_dup_suppression=args.near_dup_suppression,
+        inner_retrieval_method=getattr(args, "inner_retrieval_method", "rrf"),
     )
     # Free the retriever (embedding model + reranker) before loading the LLM.
     # On a 4 GiB GPU both cannot coexist; explicit deletion + cache flush ensures
@@ -193,15 +196,23 @@ def cmd_prompt(args: argparse.Namespace) -> None:
     if args.judge and cls_results:
         from rag.llm_judge import LLMJudge
 
-        # Classifier was already freed by _classify_all; load the judge into
-        # the now-empty VRAM.
-        judge = LLMJudge()
-        judge_results = judge.evaluate_batch(cls_results)
-        del judge
-        _free_gpu("after judge")
         judge_path = args.output.parent / f"{args.output.stem}_judge.csv"
-        save_judge_results_csv(judge_results, judge_path)
-        print(f"[prompt] Judge -> {judge_path}")
+        # Remove stale file so append_judge_result_csv starts fresh.
+        if judge_path.exists():
+            judge_path.unlink()
+
+        try:
+            judge = LLMJudge()
+            judge_results = judge.evaluate_batch(cls_results, output_path=judge_path)
+            del judge
+            _free_gpu("after judge")
+            if not judge_results:
+                print("[prompt] Judge produced no results — check logs for errors.")
+            else:
+                print(f"[prompt] Judge -> {judge_path} ({len(judge_results)} rows)")
+        except Exception as exc:
+            logger.error("Judge stage failed: %s", exc)
+            print(f"[prompt] Judge stage ERROR: {exc}")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:

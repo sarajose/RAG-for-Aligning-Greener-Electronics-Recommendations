@@ -223,6 +223,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             top_k=args.top_k,
             rerank_top=args.rerank_top,
             rrf_k=getattr(args, "rrf_k", 60),
+            retrieval_mode=getattr(args, "retrieval_mode", "flat_baseline"),
         )
 
         for method_name, retriever in retrievers.items():
@@ -290,68 +291,68 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 _write_step_checkpoint(whitepaper_export_step, {"artifact": str(whitepaper_export_csv)})
 
         if not args.skip_mteb:
-            mteb_method = "rrf_rerank" if reranker is not None else "rrf"
-            mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv"
-            mteb_step = f"mteb_chunk__{model_key}__{mteb_method}"
-            if _has_metrics("mteb_legal", "chunk", model_key, mteb_method) and _step_done(mteb_step, [mteb_out_csv]):
-                print(f"[resume] Skipping existing MTEB eval: {model_key}/{mteb_method}")
-                continue
-            try:
-                print(
-                    f"[mteb] Starting chunk-level eval for model={model_key}, method={mteb_method}, "
-                    f"dataset={args.mteb_dataset}, split={args.mteb_split}",
-                    flush=True,
-                )
-                mteb_retriever = _build_mteb_retriever(
-                    model_key=model_key,
-                    use_reranker=(reranker is not None),
-                    reranker=reranker,
-                    dataset_id=args.mteb_dataset,
-                    max_corpus=args.max_corpus,
-                    embed_batch_size=mteb_embed_batch_size,
-                    embed_device=getattr(args, "mteb_device", "auto"),
-                    embed_precision=getattr(args, "mteb_precision", "float32"),
-                )
-                mteb_metrics = _evaluate_mteb_chunk_level(
-                    retriever=mteb_retriever,
-                    dataset_id=args.mteb_dataset,
-                    split_name=args.mteb_split,
-                    k_values=sorted(set(args.k_values)),
-                    top_k=max(args.top_k * 3, 30),
-                    max_corpus=args.max_corpus,
-                    model_key=model_key,
-                    method=mteb_method,
-                    out_retrieved_csv=mteb_out_csv,
-                )
-                metrics_rows.extend(
-                    _metrics_to_rows(
-                        mteb_metrics,
-                        dataset="mteb_legal",
-                        level="chunk",
+            for mteb_method in list(retrievers.keys()):
+                mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv"
+                mteb_step = f"mteb_chunk__{model_key}__{mteb_method}"
+                if _has_metrics("mteb_legal", "chunk", model_key, mteb_method) and _step_done(mteb_step, [mteb_out_csv]):
+                    print(f"[resume] Skipping existing MTEB eval: {model_key}/{mteb_method}")
+                    continue
+                try:
+                    print(
+                        f"[mteb] Starting chunk-level eval for model={model_key}, method={mteb_method}, "
+                        f"dataset={args.mteb_dataset}, split={args.mteb_split}",
+                        flush=True,
+                    )
+                    mteb_retriever = _build_mteb_retriever(
                         model_key=model_key,
                         method=mteb_method,
+                        reranker=reranker,
+                        dataset_id=args.mteb_dataset,
+                        max_corpus=args.max_corpus,
+                        embed_batch_size=mteb_embed_batch_size,
+                        embed_device=getattr(args, "mteb_device", "auto"),
+                        embed_precision=getattr(args, "mteb_precision", "float32"),
                     )
-                )
-                _checkpoint_metrics(f"mteb eval {model_key}/{mteb_method}")
-                _write_step_checkpoint(mteb_step, {"artifact": str(mteb_out_csv)})
-                print(
-                    f"[mteb] Finished chunk-level eval for model={model_key}, method={mteb_method}",
-                    flush=True,
-                )
-            except Exception as exc:
-                msg = str(exc).lower()
-                if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
-                    print(f"[warn] Skipping MTEB for model={model_key} due to memory limits: {exc}")
-                else:
-                    print(f"[warn] Skipping MTEB for model={model_key} due to non-fatal error: {exc}")
-                _write_step_checkpoint(
-                    mteb_step,
-                    {
-                        "status": "skipped",
-                        "error": str(exc),
-                    },
-                )
-                continue
+                    mteb_metrics = _evaluate_mteb_chunk_level(
+                        retriever=mteb_retriever,
+                        dataset_id=args.mteb_dataset,
+                        split_name=args.mteb_split,
+                        k_values=sorted(set(args.k_values)),
+                        top_k=max(args.top_k * 3, 30),
+                        max_corpus=args.max_corpus,
+                        model_key=model_key,
+                        method=mteb_method,
+                        out_retrieved_csv=mteb_out_csv,
+                    )
+                    metrics_rows.extend(
+                        _metrics_to_rows(
+                            mteb_metrics,
+                            dataset="mteb_legal",
+                            level="chunk",
+                            model_key=model_key,
+                            method=mteb_method,
+                        )
+                    )
+                    _checkpoint_metrics(f"mteb eval {model_key}/{mteb_method}")
+                    _write_step_checkpoint(mteb_step, {"artifact": str(mteb_out_csv)})
+                    print(
+                        f"[mteb] Finished chunk-level eval for model={model_key}, method={mteb_method}",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
+                        print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to memory limits: {exc}")
+                    else:
+                        print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to non-fatal error: {exc}")
+                    _write_step_checkpoint(
+                        mteb_step,
+                        {
+                            "status": "skipped",
+                            "error": str(exc),
+                        },
+                    )
+                    continue
 
     if getattr(args, "include_splade", False):
         _run_splade_eval(

@@ -18,6 +18,8 @@ from data_models import Chunk
 from embedding_indexing import build_faiss_index, embed_texts, get_embed_model, tokenize
 from evaluation.experiment_helpers import _log_progress, _safe_retrieve, _ts
 from evaluation.metrics import compute_retrieval_metrics
+from retrieval.bm25_retriever import BM25Retriever
+from retrieval.dense_retriever import DenseRetriever
 from retrieval.reranker import RerankedRetriever, Reranker
 from retrieval.retrieval import HybridRetriever
 from retrieval.splade_retriever import SPLADERetriever
@@ -344,7 +346,7 @@ def _evaluate_mteb_chunk_level(
 
 def _build_mteb_retriever(
     model_key: str,
-    use_reranker: bool,
+    method: str,
     reranker: Reranker | None,
     dataset_id: str,
     max_corpus: int | None,
@@ -355,7 +357,10 @@ def _build_mteb_retriever(
     from rank_bm25 import BM25Okapi
 
     start_ts = time.perf_counter()
-    _log_progress(f"Preparing hybrid retriever for model={model_key}, dataset={dataset_id}")
+    base_method = method.removesuffix("_rerank") if method.endswith("_rerank") else method
+    use_rerank = method.endswith("_rerank")
+
+    _log_progress(f"Preparing retriever method={method} for model={model_key}, dataset={dataset_id}")
     _log_progress("Loading corpus split for retriever build...")
     corpus_ds = _load_split(dataset_id, "en-corpus", "test")
     _log_progress("Building MTEB chunks/texts for retriever build...")
@@ -363,6 +368,14 @@ def _build_mteb_retriever(
     _log_progress(f"Tokenizing and building BM25 over {len(texts)} texts...")
 
     bm25 = BM25Okapi([tokenize(t) for t in texts])
+
+    if base_method == "bm25":
+        base: BM25Retriever | DenseRetriever | HybridRetriever = BM25Retriever(bm25, chunks)
+        _log_progress(f"BM25 retriever ready ({time.perf_counter() - start_ts:.1f}s).")
+        if use_rerank and reranker is not None:
+            return RerankedRetriever(base, reranker, initial_k=max(DEFAULT_TOP_K * 2, 30), final_k=DEFAULT_RERANK_TOP)
+        return base
+
     _log_progress(f"Loading embedding model {model_key}...")
     embed_model = get_embed_model(model_key)
     emb_cache_path, faiss_cache_path, meta_cache_path = _mteb_cache_paths(
@@ -474,17 +487,20 @@ def _build_mteb_retriever(
             "faiss_path": str(faiss_cache_path),
         },
     )
-    hybrid = HybridRetriever(faiss_index, bm25, chunks, embed_model)
-    _log_progress(f"Hybrid retriever is ready (total build: {time.perf_counter() - start_ts:.1f}s).")
+    if base_method == "dense":
+        base = DenseRetriever(faiss_index, chunks, embed_model)
+    else:  # rrf
+        base = HybridRetriever(faiss_index, bm25, chunks, embed_model)
+    _log_progress(f"Retriever ({method}) ready (total build: {time.perf_counter() - start_ts:.1f}s).")
 
-    if use_reranker and reranker is not None:
+    if use_rerank and reranker is not None:
         return RerankedRetriever(
-            hybrid,
+            base,
             reranker,
             initial_k=max(DEFAULT_TOP_K * 2, 30),
             final_k=DEFAULT_RERANK_TOP,
         )
-    return hybrid
+    return base
 
 
 def _build_mteb_splade_retriever(

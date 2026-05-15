@@ -8,12 +8,15 @@ from pathlib import Path
 import time
 from typing import Any
 
-from config import INDEX_DIR, RRF_K
+from config import INDEX_DIR, RRF_K, DEFAULT_TOP_K
 from embedding_indexing import get_embed_model, load_indices
+from retrieval.base_retriever import BaseRetriever
 from retrieval.bm25_retriever import BM25Retriever
 from retrieval.dense_retriever import DenseRetriever
 from retrieval.hybrid_retriever import HybridRetriever as CompositeHybridRetriever
+from retrieval.retrieval import HybridRetriever as FullHybridRetriever
 from retrieval.reranker import RerankedRetriever, Reranker
+from data_models import RetrievalResult
 
 
 def _ts() -> str:
@@ -216,19 +219,42 @@ def _indices_exist(model_key: str) -> bool:
     )
 
 
+class _SplitEvidenceRetriever(BaseRetriever):
+    """Wraps FullHybridRetriever with retrieval_mode fixed to split_evidence_retrieval."""
+
+    def __init__(self, full_retriever: FullHybridRetriever) -> None:
+        self._retriever = full_retriever
+
+    @property
+    def name(self) -> str:
+        return "Hybrid (BM25 + FAISS + RRF, split_evidence)"
+
+    def retrieve(self, query: str, top_k: int = DEFAULT_TOP_K, **_kwargs) -> RetrievalResult:
+        return self._retriever.retrieve(
+            query,
+            top_k=top_k,
+            retrieval_mode="split_evidence_retrieval",
+        )
+
+
 def _build_retrievers_for_model(
     model_key: str,
     reranker: Reranker | None,
     top_k: int,
     rerank_top: int,
     rrf_k: int = RRF_K,
+    retrieval_mode: str = "flat_baseline",
 ) -> dict[str, Any]:
     faiss_index, bm25_index, chunks = load_indices(model_key)
     embed_model = get_embed_model(model_key)
 
     bm25 = BM25Retriever(bm25_index, chunks)
     dense = DenseRetriever(faiss_index, chunks, embed_model)
-    hybrid = CompositeHybridRetriever(faiss_index, bm25_index, chunks, embed_model, rrf_k=rrf_k)
+    if retrieval_mode == "split_evidence_retrieval":
+        full_retriever = FullHybridRetriever(faiss_index, bm25_index, chunks, embed_model, use_reranker=False)
+        hybrid = _SplitEvidenceRetriever(full_retriever)
+    else:
+        hybrid = CompositeHybridRetriever(faiss_index, bm25_index, chunks, embed_model, rrf_k=rrf_k)
 
     retrievers: dict[str, Any] = {
         "bm25": bm25,

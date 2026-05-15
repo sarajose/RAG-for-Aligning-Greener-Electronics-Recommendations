@@ -122,69 +122,92 @@ def _run_splade_eval(
                 mark_step_fn(whitepaper_export_step)
 
     if not args.skip_mteb:
-        mteb_method = "splade_rerank" if reranker is not None else "splade"
-        mteb_step = f"mteb_chunk__splade__{mteb_method}"
-        mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_splade_{mteb_method}.csv"
-        if (
-            has_metrics_fn is not None
-            and has_metrics_fn("mteb_legal", "chunk", "splade", mteb_method)
-            and step_done_fn is not None
-            and step_done_fn(mteb_step, [mteb_out_csv])
-        ):
-            print(f"[resume] Skipping SPLADE MTEB step already completed: {mteb_method}")
+        # Determine which SPLADE MTEB methods still need evaluation
+        candidate_mteb_methods = list(splade_retrievers.keys())
+        pending_mteb = []
+        for _m in candidate_mteb_methods:
+            _step = f"mteb_chunk__splade__{_m}"
+            _csv = args.output_dir / f"mteb_retrieved_chunks_splade_{_m}.csv"
+            if (
+                has_metrics_fn is not None
+                and has_metrics_fn("mteb_legal", "chunk", "splade", _m)
+                and step_done_fn is not None
+                and step_done_fn(_step, [_csv])
+            ):
+                print(f"[resume] Skipping SPLADE MTEB step already completed: {_m}")
+            else:
+                pending_mteb.append(_m)
+
+        if not pending_mteb:
             return
+
+        # Build SPLADE retriever once for MTEB corpus (no caching available)
         try:
-            print(
-                f"[mteb] Starting chunk-level eval for model=splade, method={mteb_method}, "
-                f"dataset={args.mteb_dataset}, split={args.mteb_split}",
-                flush=True,
-            )
-            mteb_retriever = _build_mteb_splade_retriever(
+            base_mteb_splade = _build_mteb_splade_retriever(
                 dataset_id=args.mteb_dataset,
                 max_corpus=args.max_corpus,
                 model_name=args.splade_model,
                 max_length=args.splade_max_length,
             )
-            if reranker is not None:
-                mteb_retriever = RerankedRetriever(
-                    mteb_retriever,
-                    reranker,
-                    initial_k=max(args.top_k * 2, 30),
-                    final_k=args.rerank_top,
-                )
-            mteb_metrics = _evaluate_mteb_chunk_level(
-                retriever=mteb_retriever,
-                dataset_id=args.mteb_dataset,
-                split_name=args.mteb_split,
-                k_values=sorted(set(args.k_values)),
-                top_k=max(args.top_k * 3, 30),
-                max_corpus=args.max_corpus,
-                model_key="splade",
-                method=mteb_method,
-                out_retrieved_csv=mteb_out_csv,
-            )
-            metrics_rows.extend(
-                _metrics_to_rows(
-                    mteb_metrics,
-                    dataset="mteb_legal",
-                    level="chunk",
-                    model_key="splade",
-                    method=mteb_method,
-                )
-            )
-            checkpoint_fn(f"mteb eval splade/{mteb_method}")
-            if mark_step_fn is not None:
-                mark_step_fn(mteb_step)
-            print(
-                f"[mteb] Finished chunk-level eval for model=splade, method={mteb_method}",
-                flush=True,
-            )
         except Exception as exc:
             msg = str(exc).lower()
             if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
-                print(f"[warn] Skipping MTEB for model=splade due to memory limits: {exc}")
+                print(f"[warn] Could not build MTEB SPLADE retriever due to memory limits: {exc}")
+                return
             else:
                 raise
+
+        mteb_eval_map: dict[str, Any] = {"splade": base_mteb_splade}
+        if reranker is not None:
+            mteb_eval_map["splade_rerank"] = RerankedRetriever(
+                base_mteb_splade,
+                reranker,
+                initial_k=max(args.top_k * 2, 30),
+                final_k=args.rerank_top,
+            )
+
+        for mteb_method in pending_mteb:
+            mteb_step = f"mteb_chunk__splade__{mteb_method}"
+            mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_splade_{mteb_method}.csv"
+            try:
+                print(
+                    f"[mteb] Starting chunk-level eval for model=splade, method={mteb_method}, "
+                    f"dataset={args.mteb_dataset}, split={args.mteb_split}",
+                    flush=True,
+                )
+                mteb_metrics = _evaluate_mteb_chunk_level(
+                    retriever=mteb_eval_map[mteb_method],
+                    dataset_id=args.mteb_dataset,
+                    split_name=args.mteb_split,
+                    k_values=sorted(set(args.k_values)),
+                    top_k=max(args.top_k * 3, 30),
+                    max_corpus=args.max_corpus,
+                    model_key="splade",
+                    method=mteb_method,
+                    out_retrieved_csv=mteb_out_csv,
+                )
+                metrics_rows.extend(
+                    _metrics_to_rows(
+                        mteb_metrics,
+                        dataset="mteb_legal",
+                        level="chunk",
+                        model_key="splade",
+                        method=mteb_method,
+                    )
+                )
+                checkpoint_fn(f"mteb eval splade/{mteb_method}")
+                if mark_step_fn is not None:
+                    mark_step_fn(mteb_step)
+                print(
+                    f"[mteb] Finished chunk-level eval for model=splade, method={mteb_method}",
+                    flush=True,
+                )
+            except Exception as exc:
+                msg = str(exc).lower()
+                if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
+                    print(f"[warn] Skipping MTEB for model=splade method={mteb_method} due to memory limits: {exc}")
+                else:
+                    raise
 
 
 def _run_colbert_eval(

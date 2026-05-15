@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from config import evidence_group_for_document
+from config import evidence_group_for_document, EVIDENCE_MAX_CHARS_PER_CHUNK
 from data_models import ClassificationResult, Recommendation
 
 
@@ -80,6 +80,33 @@ def save_retrieved_chunks_csv(
         writer.writerows(rows)
 
 
+_JUDGE_FIELDS = [
+    "recommendation", "predicted_label", "label_score", "justification_score",
+    "evidence_score", "completeness_score", "overall_score", "reasoning",
+]
+
+
+def append_judge_result_csv(result: Any, output_path: Path) -> None:
+    """Append a single JudgeResult row to CSV, writing the header if the file is new."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not output_path.exists()
+    row = {
+        "recommendation": result.recommendation,
+        "predicted_label": result.predicted_label,
+        "label_score": result.label_score,
+        "justification_score": result.justification_score,
+        "evidence_score": result.evidence_score,
+        "completeness_score": result.completeness_score,
+        "overall_score": result.overall_score,
+        "reasoning": result.reasoning,
+    }
+    with open(output_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_JUDGE_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def save_judge_results_csv(judge_results: list[Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -135,7 +162,7 @@ def save_prompt_output_csv(
                 "top_chunk_ids": "; ".join(c.id for c in ret.ranked_chunks),
                 "top_chunk_groups": "; ".join(chunk_groups),
                 "top_chunk_texts": "\n---\n".join(
-                    f"[{c.document} | {c.article}]\n{c.text[:400]}" for c in ret.ranked_chunks
+                    f"[{c.document} | {c.article}]\n{(c.article_text if c.article_text else c.text)[:EVIDENCE_MAX_CHARS_PER_CHUNK]}" for c in ret.ranked_chunks
                 ),
                 "alignment_label": cls.label if cls else "",
                 "justification": cls.justification if cls else "",

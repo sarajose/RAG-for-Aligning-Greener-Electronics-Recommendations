@@ -398,6 +398,19 @@ def extract_generic_document_chunks(
     current_heading = ""
     para_counter = 0
 
+    # Fix 3: buffer chunks and raw texts per section so article_text can be
+    # populated after all bullets in a section are known.
+    section_buffer: list[dict] = []
+    section_texts: list[str] = []
+
+    def flush_section() -> None:
+        full_section = " ".join(section_texts)
+        for chunk in section_buffer:
+            chunk["article_text"] = full_section
+        rows.extend(section_buffer)
+        section_buffer.clear()
+        section_texts.clear()
+
     for node in container.find_all(["h1", "h2", "h3", "h4", "p", "li"]):
         text = tag_text(node)
         if not text:
@@ -421,17 +434,22 @@ def extract_generic_document_chunks(
 
         if node.name.startswith("h") or "heading" in classes:
             if len(text) >= 4:
+                flush_section()
                 current_heading = text
             continue
 
         if len(text) < MIN_BLOCK_CHARS:
             continue
 
+        section_texts.append(text)
         for part in split_text_for_embedding_budget(text):
             para_counter += 1
             article = f"Section: {current_heading}" if current_heading else "General"
-            chunk_id = generate_chunk_id(doc_name, article, str(para_counter), part)
-            rows.append({
+            # Fix 1: prepend heading so the embedded text has a subject and
+            # the retrieval signal is not a decontextualised predicate fragment.
+            embedded_text = f"{current_heading}: {part}" if current_heading else part
+            chunk_id = generate_chunk_id(doc_name, article, str(para_counter), embedded_text)
+            section_buffer.append({
                 "id": chunk_id,
                 "document": doc_name,
                 "source_file": source_file,
@@ -441,9 +459,11 @@ def extract_generic_document_chunks(
                 "article_subtitle": "",
                 "paragraph": str(para_counter),
                 "char_offset": 0,
-                "text": part,
+                "text": embedded_text,
+                # article_text is set by flush_section() once the full section is known
             })
 
+    flush_section()
     return rows
 
 

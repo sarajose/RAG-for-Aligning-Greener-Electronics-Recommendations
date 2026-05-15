@@ -61,6 +61,10 @@ def main() -> None:
         help="flat_baseline (default) or split_evidence_retrieval",
     )
     p_prompt.add_argument("--no-rerank", action="store_true", help="Skip cross-encoder reranking")
+    p_prompt.add_argument(
+        "--inner-retrieval-method", default="rrf", choices=["rrf", "dense", "bm25"],
+        help="Inner retrieval method used within each evidence group (split_evidence_retrieval only)",
+    )
     p_prompt.add_argument("--max-chunks-per-doc", type=int, default=2)
     p_prompt.add_argument("--near-dup-suppression", action="store_true")
     p_prompt.add_argument("--retrieve-only", action="store_true", help="Skip LLM classification")
@@ -103,6 +107,10 @@ def main() -> None:
         choices=["float32", "int8", "uint8", "binary", "ubinary"],
         default="float32",
         help="Embedding precision used by SentenceTransformer.encode during MTEB building.",
+    )
+    p_eval.add_argument(
+        "--retrieval-mode", default=DEFAULT_RETRIEVAL_MODE, choices=RETRIEVAL_MODES,
+        help="flat_baseline (default) or split_evidence_retrieval",
     )
     p_eval.add_argument("--full-mteb", action="store_true")
     p_eval.add_argument("--skip-whitepaper", action="store_true")

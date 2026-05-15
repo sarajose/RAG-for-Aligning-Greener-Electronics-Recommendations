@@ -37,6 +37,7 @@ from config import (
     RERANKER_MODEL,
     RRF_K,
     evidence_group_for_document,
+    normalise_doc_name,
 )
 import config as _config
 from data_models import Chunk, RetrievalResult
@@ -236,6 +237,7 @@ class HybridRetriever:
         retrieval_mode: str = DEFAULT_RETRIEVAL_MODE,
         max_chunks_per_doc: int = DEFAULT_MAX_CHUNKS_PER_DOC,
         near_dup_suppression: bool = DEFAULT_NEAR_DUP_SUPPRESSION,
+        inner_retrieval_method: str = "rrf",
     ) -> RetrievalResult:
         """Retrieve and optionally rerank chunks for *query*.
 
@@ -266,6 +268,7 @@ class HybridRetriever:
                 rerank_top=rerank_top,
                 max_chunks_per_doc=max_chunks_per_doc,
                 near_dup_suppression=near_dup_suppression,
+                inner_retrieval_method=inner_retrieval_method,
             )
 
         # 1 & 2 — Sparse + Dense
@@ -314,6 +317,7 @@ class HybridRetriever:
         group_name: str,
         top_k: int,
         rerank_top: int,
+        inner_retrieval_method: str = "rrf",
     ) -> list[tuple[int, float, str]]:
         """Retrieve candidates from one evidence group only."""
         resources = self._group_resources.get(group_name)
@@ -325,13 +329,24 @@ class HybridRetriever:
         group_bm25: BM25Okapi = resources["bm25"]  # type: ignore[index]
 
         candidate_k = min(top_k * 2, len(global_indices))
-        _, bm25_local_idx = search_bm25(group_bm25, query, k=candidate_k)
-        _, dense_local_idx = search_faiss(group_faiss, q_emb, k=candidate_k)
+        
+        if inner_retrieval_method == "dense":
+            _, dense_local_idx = search_faiss(group_faiss, q_emb, k=top_k)
+            hybrid_local = dense_local_idx.tolist()
+            local_scores = {idx: 1.0 / (i + 1) for i, idx in enumerate(hybrid_local)}
+        elif inner_retrieval_method == "bm25":
+            _, bm25_local_idx = search_bm25(group_bm25, query, k=top_k)
+            hybrid_local = bm25_local_idx.tolist()
+            local_scores = {idx: 1.0 / (i + 1) for i, idx in enumerate(hybrid_local)}
+        else:
+            _, bm25_local_idx = search_bm25(group_bm25, query, k=candidate_k)
+            _, dense_local_idx = search_faiss(group_faiss, q_emb, k=candidate_k)
+            fused_local = reciprocal_rank_fusion(
+                [bm25_local_idx.tolist(), dense_local_idx.tolist()]
+            )
+            hybrid_local = [local_idx for local_idx, _ in fused_local[:top_k]]
+            local_scores = {local_idx: score for local_idx, score in fused_local}
 
-        fused_local = reciprocal_rank_fusion(
-            [bm25_local_idx.tolist(), dense_local_idx.tolist()]
-        )
-        hybrid_local = [local_idx for local_idx, _ in fused_local[:top_k]]
         hybrid_global = [global_indices[i] for i in hybrid_local]
 
         if not hybrid_global:
@@ -346,11 +361,10 @@ class HybridRetriever:
             )
             return [(idx, score, group_name) for idx, score in reranked]
 
-        local_fused_scores = {local_idx: score for local_idx, score in fused_local}
         candidates: list[tuple[int, float, str]] = []
         for local_idx in hybrid_local[:rerank_top]:
             global_idx = global_indices[local_idx]
-            candidates.append((global_idx, float(local_fused_scores.get(local_idx, 0.0)), group_name))
+            candidates.append((global_idx, float(local_scores.get(local_idx, 0.0)), group_name))
         return candidates
 
     def _select_with_constraints(
@@ -368,11 +382,12 @@ class HybridRetriever:
 
         def can_select(idx: int) -> bool:
             chunk = self.chunks[idx]
-            if max_chunks_per_doc > 0 and doc_counts[chunk.document] >= max_chunks_per_doc:
+            norm_doc = normalise_doc_name(chunk.document)
+            if max_chunks_per_doc > 0 and doc_counts[norm_doc] >= max_chunks_per_doc:
                 return False
             if near_dup_suppression:
                 fp = self._chunk_text_fingerprint(chunk.text)
-                if fp in doc_fingerprints[chunk.document]:
+                if fp in doc_fingerprints[norm_doc]:
                     return False
             return True
 
@@ -381,9 +396,10 @@ class HybridRetriever:
             selected.append((idx, score, group))
             selected_ids.add(idx)
             chunk = self.chunks[idx]
-            doc_counts[chunk.document] += 1
+            norm_doc = normalise_doc_name(chunk.document)
+            doc_counts[norm_doc] += 1
             if near_dup_suppression:
-                doc_fingerprints[chunk.document].add(self._chunk_text_fingerprint(chunk.text))
+                doc_fingerprints[norm_doc].add(self._chunk_text_fingerprint(chunk.text))
 
         # Coverage first: try to include both groups when possible.
         for group_name in ("binding_law", "policy_or_recommendation_docs"):
@@ -417,6 +433,7 @@ class HybridRetriever:
         rerank_top: int,
         max_chunks_per_doc: int,
         near_dup_suppression: bool,
+        inner_retrieval_method: str = "rrf",
     ) -> RetrievalResult:
         """Retrieve separately from binding law and policy docs, then merge."""
         self._ensure_group_resources()
@@ -437,6 +454,7 @@ class HybridRetriever:
                     group_name=group_name,
                     top_k=top_k,
                     rerank_top=rerank_top,
+                    inner_retrieval_method=inner_retrieval_method,
                 )
             )
 
