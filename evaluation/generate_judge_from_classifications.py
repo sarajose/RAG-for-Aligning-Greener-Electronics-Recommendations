@@ -1,10 +1,8 @@
 from __future__ import annotations
-
 import argparse
 import re
 import sys
 from pathlib import Path
-
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +13,6 @@ from data_models import Chunk, ClassificationResult
 from pipeline_io import save_judge_results_csv
 from rag.llm_judge import LLMJudge
 
-
 def _split_semicolon(value: object) -> list[str]:
     if value is None:
         return []
@@ -24,7 +21,6 @@ def _split_semicolon(value: object) -> list[str]:
         return []
     return [p.strip() for p in text.split(";") if p.strip()]
 
-
 def _parse_chunk_header(text: str) -> tuple[str, str]:
     # Expected format like: [PPWR | Article 3]
     first_line = (text or "").splitlines()[0].strip()
@@ -32,7 +28,6 @@ def _parse_chunk_header(text: str) -> tuple[str, str]:
     if not m:
         return "", ""
     return m.group(1).strip(), m.group(2).strip()
-
 
 def _build_chunks(row: pd.Series) -> list[Chunk]:
     texts_raw = str(row.get("top_chunk_texts", "") or "")
@@ -58,7 +53,6 @@ def _build_chunks(row: pd.Series) -> list[Chunk]:
             )
         )
     return chunks
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate judge CSV from existing classifications CSV")
@@ -91,7 +85,6 @@ def main() -> None:
                 raw_llm_response="",
             )
         )
-
     if not classifications:
         raise ValueError("No valid classification rows found in input CSV.")
 
@@ -104,7 +97,6 @@ def main() -> None:
     judge_results = judge.evaluate_batch(classifications)
     save_judge_results_csv(judge_results, args.output)
     print(f"[judge-gen] Saved judge CSV -> {args.output}")
-
 
 if __name__ == "__main__":
     main()

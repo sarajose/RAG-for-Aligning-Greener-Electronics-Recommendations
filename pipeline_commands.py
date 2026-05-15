@@ -174,7 +174,10 @@ def cmd_prompt(args: argparse.Namespace) -> None:
 
         judge_path = args.output.parent / f"{args.output.stem}_judge.csv"
         if judge_path.exists():
-            judge_path.unlink()
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            judge_path = args.output.parent / f"{args.output.stem}_judge_{ts}.csv"
+            print(f"[prompt] Judge output already exists — writing to {judge_path}")
 
         try:
             judge = LLMJudge()

@@ -27,7 +27,6 @@ from retrieval.reranker import RerankedRetriever, Reranker
 from retrieval.retrieval import HybridRetriever
 from retrieval.splade_retriever import SPLADERetriever
 
-
 def _mteb_cache_paths(
     *,
     model_key: str,
@@ -46,12 +45,10 @@ def _mteb_cache_paths(
         cache_root / f"{stem}_meta.json",
     )
 
-
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _replace_with_retry(tmp, path)
-
 
 def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: float = 0.1) -> None:
     """Atomically replace `path` with `tmp`, retrying on Windows file-lock races."""
@@ -75,14 +72,12 @@ def _replace_with_retry(tmp: Path, path: Path, retries: int = 6, base_delay_s: f
     if last_exc is not None:
         raise last_exc
 
-
 def _cleanup_stale_temp_files(path: Path) -> None:
     try:
         for candidate in path.parent.glob(f"{path.name}.*.tmp*"):
             candidate.unlink(missing_ok=True)
     except Exception:
         pass
-
 
 def _recover_legacy_npy_tmp(path: Path) -> bool:
     legacy = Path(str(path) + ".tmp.npy")
@@ -94,7 +89,6 @@ def _recover_legacy_npy_tmp(path: Path) -> bool:
     except Exception:
         return False
 
-
 def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
     _cleanup_stale_temp_files(path)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
@@ -103,7 +97,6 @@ def _atomic_save_npy(path: Path, array: np.ndarray) -> None:
         f.flush()
         os.fsync(f.fileno())
     _replace_with_retry(tmp, path)
-
 
 def _load_split(dataset_id: str, config_name: str, split_name: str):
     from datasets import load_dataset, load_from_disk
@@ -157,7 +150,6 @@ def _load_split(dataset_id: str, config_name: str, split_name: str):
     except Exception:
         return load_dataset(dataset_id, split=split_name)
 
-
 def _build_mteb_chunks(corpus_ds, max_corpus: int | None) -> tuple[list[Chunk], list[str]]:
     chunks: list[Chunk] = []
     texts: list[str] = []
@@ -176,7 +168,6 @@ def _build_mteb_chunks(corpus_ds, max_corpus: int | None) -> tuple[list[Chunk], 
         ))
         texts.append(merged)
     return chunks, texts
-
 
 def _load_mteb_queries_qrels(
     dataset_id: str,
@@ -210,7 +201,6 @@ def _load_mteb_queries_qrels(
         relevant_by_query.setdefault(qid, set()).add(did)
 
     return queries, relevant_by_query
-
 
 def _evaluate_mteb_chunk_level(
     *,
@@ -286,7 +276,6 @@ def _evaluate_mteb_chunk_level(
     _log_progress(f"DONE eval: model={model_key}, method={method}, queries={len(ordered_qids)}, elapsed={total_elapsed:.1f}s")
 
     return {k: compute_retrieval_metrics(all_retrieved, all_relevant, k) for k in sorted(set(k_values))}
-
 
 def _build_mteb_retriever(
     model_key: str,
@@ -388,7 +377,6 @@ def _build_mteb_retriever(
         return RerankedRetriever(base, reranker, initial_k=max(DEFAULT_TOP_K * 2, 30), final_k=DEFAULT_RERANK_TOP)
     return base
 
-
 def _build_and_cache_faiss(embeddings: np.ndarray, chunks: list, faiss_cache_path: Path):
     """Build a FlatIP FAISS index and cache it atomically."""
     _log_progress("Building FAISS index (FlatIP/exact)...")
@@ -403,7 +391,6 @@ def _build_and_cache_faiss(embeddings: np.ndarray, chunks: list, faiss_cache_pat
     faiss.write_index(faiss_index, str(tmp_faiss))
     _replace_with_retry(tmp_faiss, faiss_cache_path)
     return faiss_index
-
 
 def _build_mteb_splade_retriever(
     *,

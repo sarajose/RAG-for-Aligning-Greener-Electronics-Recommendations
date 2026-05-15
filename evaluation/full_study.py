@@ -1,17 +1,14 @@
 """Prompt study analysis helper.
-
-Analyzes classification and judge outputs from `main.py prompt --judge`,
+Analyzes classification and judge outputs from `main.py prompt --judge,
 generating distribution CSVs that are read by the classifier and judge notebooks.
 """
 
 from __future__ import annotations
-
 import argparse
 import json
 import sys
 from pathlib import Path
 from typing import Any
-
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 
@@ -22,7 +19,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import OUTPUT_DIR
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Thesis evaluation orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -31,9 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_prompt.add_argument("--prompt-csv", type=Path, required=True)
     p_prompt.add_argument("--judge-csv", type=Path, default=None)
     p_prompt.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_prompt")
-
     return parser
-
 
 def _split_semicolon_values(series: pd.Series) -> pd.Series:
     """Flatten a Series of semicolon-separated strings into individual values."""
@@ -41,7 +35,6 @@ def _split_semicolon_values(series: pd.Series) -> pd.Series:
     values = cleaned.str.split(";")
     flattened = [item.strip() for sub in values for item in sub if item and item.strip()]
     return pd.Series(flattened, dtype="string")
-
 
 def run_prompt_study(args: argparse.Namespace) -> None:
     """Analyze classification and judge CSVs; write distribution CSVs to output_dir."""
@@ -122,13 +115,11 @@ def run_prompt_study(args: argparse.Namespace) -> None:
     summary_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"[done] Prompt study summary -> {summary_json}")
 
-
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     if args.command == "prompt-study":
         run_prompt_study(args)
-
 
 if __name__ == "__main__":
     main()

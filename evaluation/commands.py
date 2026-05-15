@@ -1,17 +1,13 @@
 """CLI command handlers for evaluation workflows."""
 
 from __future__ import annotations
-
 import argparse
 from pathlib import Path
-
 import pandas as pd
-
 from config import EMBEDDING_MODELS, JUDGE_MODEL, LLM_MODEL, RERANKER_MODEL
 from evaluation.retrieval_eval import cmd_unified_eval
 
 __all__ = ["cmd_unified_eval", "cmd_merge_eval", "cmd_download_models"]
-
 
 def cmd_merge_eval(args: argparse.Namespace) -> None:
     """Merge one or more remote metrics CSVs into the local metrics_all.csv."""
@@ -45,7 +41,6 @@ def cmd_merge_eval(args: argparse.Namespace) -> None:
 
     print("\n[done] Merged evaluation metrics.")
     print(f"[done] Metrics: {local_metrics_csv}")
-
 
 def cmd_download_models(args: argparse.Namespace) -> None:
     """Pre-download embedding, reranker, and LLM models."""

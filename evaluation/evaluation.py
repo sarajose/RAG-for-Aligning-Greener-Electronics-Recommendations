@@ -1,7 +1,5 @@
 """Evaluation utilities: metrics, gold standard loading, and evaluation helpers."""
-
 from __future__ import annotations
-
 import csv
 import logging
 import math
@@ -24,11 +22,7 @@ from data_models import GoldStandardEntry, RetrievalMetrics
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
 # CSV loading helpers
-# ---------------------------------------------------------------------------
-
 def _read_text_with_fallback_encodings(path: Path) -> str:
     """Read a text file trying utf-8, utf-8-sig, cp1252, then latin-1."""
     for enc in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
@@ -38,14 +32,12 @@ def _read_text_with_fallback_encodings(path: Path) -> str:
             continue
     return path.read_text(encoding="latin-1")
 
-
 def _detect_delimiter(sample: str) -> str:
     """Sniff CSV delimiter from the first few lines; default to comma."""
     try:
         return csv.Sniffer().sniff(sample, delimiters=",;").delimiter
     except csv.Error:
         return ","
-
 
 def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
     """Return the first non-None value found for any of the given keys."""
@@ -54,20 +46,14 @@ def _pick(row: dict[str, Any], *keys: str, default: str = "") -> str:
             return str(row[k])
     return default
 
-
 def _normalize_ws(text: str) -> str:
     """Collapse whitespace and strip a string."""
     return " ".join((text or "").strip().split())
 
-
-# ---------------------------------------------------------------------------
 # Per-query retrieval metrics
-# ---------------------------------------------------------------------------
-
 def hit_at_k(retrieved: list[str], relevant: set[str]) -> int:
     """1 if any relevant document appears in the retrieved list, else 0."""
     return int(bool(relevant & set(retrieved)))
-
 
 def recall_at_k(retrieved: list[str], relevant: set[str]) -> float:
     """Fraction of relevant documents found in retrieved."""
@@ -75,13 +61,11 @@ def recall_at_k(retrieved: list[str], relevant: set[str]) -> float:
         return 0.0
     return len(relevant & set(retrieved)) / len(relevant)
 
-
 def precision_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     """Fraction of top-k retrieved documents that are relevant."""
     if k == 0:
         return 0.0
     return sum(1 for d in retrieved[:k] if d in relevant) / k
-
 
 def reciprocal_rank(retrieved: list[str], relevant: set[str]) -> float:
     """Reciprocal rank of the first relevant document."""
@@ -90,14 +74,12 @@ def reciprocal_rank(retrieved: list[str], relevant: set[str]) -> float:
             return 1.0 / rank
     return 0.0
 
-
 def rank_of_first_relevant(retrieved: list[str], relevant: set[str]) -> float:
     """1-based rank of the first relevant document; inf if none found."""
     for rank, item in enumerate(retrieved, start=1):
         if item in relevant:
             return float(rank)
     return float("inf")
-
 
 def average_precision(retrieved: list[str], relevant: set[str]) -> float:
     """Mean precision at each rank position where a relevant document is retrieved."""
@@ -110,7 +92,6 @@ def average_precision(retrieved: list[str], relevant: set[str]) -> float:
             sum_prec += hits / rank
     return sum_prec / len(relevant)
 
-
 def ndcg_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     """Normalised discounted cumulative gain at cutoff k."""
     def _dcg(rels: list[int]) -> float:
@@ -121,11 +102,7 @@ def ndcg_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     idcg = _dcg(ideal)
     return _dcg(rels) / idcg if idcg > 0 else 0.0
 
-
-# ---------------------------------------------------------------------------
 # Aggregated retrieval metrics
-# ---------------------------------------------------------------------------
-
 def compute_retrieval_metrics(
     all_retrieved: list[list[str]],
     all_relevant: list[set[str]],
@@ -159,20 +136,14 @@ def compute_retrieval_metrics(
         chunk_hit_rate=chunk_hit_rate,
     )
 
-
-# ---------------------------------------------------------------------------
 # Shared helpers (used by retrieval_eval.py and mteb_eval.py)
-# ---------------------------------------------------------------------------
-
 def _ts() -> str:
     """Current timestamp string for logging."""
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
-
 def _log_progress(message: str) -> None:
     """Print a timestamped progress line (used by MTEB eval)."""
     print(f"[{_ts()}] [mteb] {message}", flush=True)
-
 
 def _safe_retrieve(retriever: Any, query: str, top_k: int):
     """Call retriever.retrieve with top_k, falling back to positional arg if needed."""
@@ -180,7 +151,6 @@ def _safe_retrieve(retriever: Any, query: str, top_k: int):
         return retriever.retrieve(query, top_k=top_k)
     except TypeError:
         return retriever.retrieve(query)
-
 
 def _metrics_to_rows(
     metrics_by_k: dict[int, Any],
@@ -201,7 +171,6 @@ def _metrics_to_rows(
         })
     return rows
 
-
 def _indices_exist(model_key: str) -> bool:
     """Return True if all three index artifacts (FAISS, BM25, chunks) exist for model_key."""
     prefix = INDEX_DIR / model_key
@@ -211,11 +180,7 @@ def _indices_exist(model_key: str) -> bool:
         and Path(str(prefix) + "_chunks.pkl").exists()
     )
 
-
-# ---------------------------------------------------------------------------
 # Gold standard loading
-# ---------------------------------------------------------------------------
-
 def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardEntry]:
     """Load gold-standard annotation rows from CSV with tolerant encoding/delimiter handling."""
     entries: list[GoldStandardEntry] = []
@@ -242,7 +207,6 @@ def load_gold_standard(csv_path: Path = GOLD_STANDARD_CSV) -> list[GoldStandardE
     logger.info("Loaded %d gold-standard rows from %s", len(entries), csv_path)
     return entries
 
-
 def group_gold_query_instances(entries: list[GoldStandardEntry]) -> list[dict[str, Any]]:
     """Group gold entries by (recommendation_text, source_snippet) and return query instances."""
     from config import normalise_doc_name
@@ -259,11 +223,7 @@ def group_gold_query_instances(entries: list[GoldStandardEntry]) -> list[dict[st
         for (query, snippet), docs in sorted(grouped.items(), key=lambda x: x[0])
     ]
 
-
-# ---------------------------------------------------------------------------
 # Core document-level retrieval evaluation
-# ---------------------------------------------------------------------------
-
 def evaluate_retrieval(
     retriever,
     gold_path: Path = GOLD_STANDARD_CSV,
