@@ -1,4 +1,4 @@
-﻿# RAG-for-Aligning-Greener-Electronics-Recommendations
+# RAG-for-Aligning-Greener-Electronics-Recommendations
 
 ## Project
 
@@ -6,9 +6,10 @@ Reproducible Retrieval-Augmented Generation (RAG) workflow that links sustainabi
 
 Pipeline stages:
 1. Chunk legal evidence (EUR-Lex HTML to CSV).
-2. Build retrieval indices (embedding and BM25).
-3. Retrieve evidence and classify alignment.
-4. Run unified evaluation
+2. Chunk recommendations whitepaper to CSV.
+3. Build retrieval indices (embedding and BM25).
+4. Retrieve evidence and classify alignment.
+5. Run unified evaluation
 
 ---
 
@@ -22,7 +23,15 @@ Parse EUR-Lex HTML files into a structured CSV of legal provisions:
 python retrieval/chunking_evidence.py -i data/evidence -o outputs/evidence.csv
 ```
 
-### 2. Build indices
+### 2. Chunk recommendations
+
+Parse the whitepaper recommendations text into a structured CSV:
+
+```powershell
+python retrieval/chunking_recommendations.py -i data/recommendations_whitepaper/recommendations.txt -o data/recommendations_whitepaper/recommendations_v2.csv
+```
+
+### 3. Build indices
 
 Build FAISS + BM25 indices for each embedding model you want to compare:
 
@@ -32,7 +41,7 @@ python main.py build -i outputs/evidence.csv -m e5-large-v2
 python main.py build -i outputs/evidence.csv -m e5-mistral
 ```
 
-### 3. Retrieve and classify
+### 4. Retrieve and classify
 
 **Split evidence retrieval** (binding law vs. policy docs retrieved separately):
 (remove retrieval mode for flat baseline)
@@ -46,13 +55,7 @@ python main.py prompt `
   --judge
 ```
 
-**Retrieve only** (skip LLM classification):
-
-```powershell
-python main.py prompt --retrieve-only --model bge-m3
-```
-
-### 4. Evaluate
+### 5. Evaluate
 
 **Full unified evaluation** (document-level gold + projected chunk-level + MTEB legal suite):
 
@@ -63,7 +66,7 @@ python main.py evaluate `
   --top-k 10
 ```
 
-**Ablation** (not used):
+**With robustness / significance tests:**
 
 ```powershell
 python main.py evaluate `
@@ -73,7 +76,7 @@ python main.py evaluate `
   --with-robustness
 ```
 
-If some models have been run separately, they can be merge again (not with robounstess as it requires to run together)
+If some models have been run separately, they can be merged:
 ```powershell
 python main.py merge-eval --remote-csv outputs/eval_mistral/metrics_all.csv outputs/eval_mteb_k_split/metrics_all.csv --output-dir outputs/eval_mteb_k_split_with_mistral
 ```
@@ -86,8 +89,6 @@ python evaluation/full_study.py prompt-study `
   --judge-csv outputs/prompt_results_judge.csv `
   --output-dir outputs/eval_prompt
 ```
-
-If those are too many commands, summarizing the full pipeline can be run using these 3:
 
 **Full pipeline (evidence → indices → evaluation):**
 
@@ -103,15 +104,12 @@ python main.py build -i outputs/evidence.csv -m e5-mistral
 # 3) Run unified evaluation + robustness analysis
 python evaluation/full_study.py retrieval-study `
   --models bge-m3 e5-large-v2 e5-mistral `
-  --include-splade `
   --with-robustness-all-models `
   --output-dir outputs/eval_thesis
 ```
 ---
 
 ## CLI reference
-
-Most of these commands are not needed but were used to try different configurations (some of them might be deleted as they are not that useful) and to work around computational constrains. Therefore is only a reference list in case some specific part wants to be checked.
 
 ### `build`
 | Argument | Default | Description |
@@ -128,40 +126,23 @@ Most of these commands are not needed but were used to try different configurati
 | `-k / --top-k` | `10` | Candidates before reranking |
 | `--rerank-top` | `5` | Results after reranking |
 | `--retrieval-mode` | `flat_baseline` | `flat_baseline` or `split_evidence_retrieval` |
-| `--no-rerank` | off | Skip cross-encoder reranking |
-| `--retrieve-only` | off | Skip LLM classification |
+| `--inner-retrieval-method` | `rrf` | Inner fusion method in split mode (`rrf`, `dense`, `bm25`) |
 | `--judge` | off | Run LLM judge after classification |
-| `--max-chunks-per-doc` | `2` | Cap chunks per document in split retrieval mode |
-| `--near-dup-suppression` | off | Enable near-duplicate suppression in split mode |
 
 ### `evaluate`
 | Argument | Default | Description |
 |---|---|---|
-| `--models` | bge-m3 e5-large-v2 | Model keys to compare |
-| `--gold-csv` | `data/gold_standard_doc_level/gold_standard.csv` | Gold standard path |
+| `--models` | bge-m3 e5-large-v2 e5-mistral | Model keys to compare |
 | `--output-dir` | `outputs/eval_unified` | Output directory |
 | `--top-k` | `10` | Retrieval candidates |
 | `--rerank-top` | `5` | Results kept after reranking |
-| `--export-k` | `10` | Number of retrieved chunks exported per query |
 | `--k-values` | `1 3 5 10 20` | Evaluation cutoffs |
-| `--whitepaper-csv` | recommendations CSV | Whitepaper recommendations path |
-| `--skip-whitepaper` | off | Skip whitepaper chunk export |
-| `--mteb-dataset` | `mteb/MuPLeR-retrieval` | MTEB retrieval dataset (English subset: `en-corpus`, `en-queries`, `en-qrels`) |
-| `--mteb-split` | `test` | MTEB split |
-| `--max-corpus` | `20000` | MTEB corpus cap |
-| `--full-mteb` | off | Use full MTEB corpus |
-| `--skip-mteb` | off | Skip MTEB legal tasks |
-| `--skip-reranker` | off | Skip cross-encoder reranking |
-| `--auto-build-indices` | off | Build missing indices automatically |
-| `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV used for auto-build |
-| `--include-splade` | off | Include SPLADE sparse baseline |
-| `--splade-model` | default in `config.py` | SPLADE model id |
-| `--splade-max-length` | default in `config.py` | SPLADE max token length |
+| `--retrieval-mode` | `flat_baseline` | `flat_baseline` or `split_evidence_retrieval` |
+| `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV for auto-building missing indices |
 | `--force-cpu` | off | Disable GPU |
 | `--with-robustness` | off | Run ablation significance tests |
-| `--robust-model` | first model in `--models` | Model used for robustness stage |
-| `--robust-k` | `10` | K used for robustness stage |
-| `--rrf-k` | `60` | RRF smoothing constant for grid search |
+
+Defaults always on (not configurable): SPLADE baseline, full MTEB corpus (MuPLeR, no cap), cross-encoder reranking, whitepaper export, auto-build missing indices.
 
 ---
 
@@ -190,7 +171,7 @@ Most of these commands are not needed but were used to try different configurati
 | `outputs/eval_unified/comparison_k10.csv` | Best vs second model gaps |
 | `outputs/eval_unified/gold_retrieved_chunks_<model>_<method>.csv` | Retrieved chunks for gold queries |
 | `outputs/eval_unified/interpretation_k10.txt` | Auto-generated interpretation |
-| `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas (not used)|
+| `outputs/eval_unified/robustness/` | Bootstrap CI, permutation tests, ablation deltas |
 
 ---
 
@@ -199,12 +180,15 @@ Most of these commands are not needed but were used to try different configurati
 **Embedding models**:
 - `bge-m3` → `BAAI/bge-m3`
 - `e5-large-v2` → `intfloat/e5-large-v2`
+- `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
 
 **LLM classifiers and judge**:
 - `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (classifier)
 - `qwen` → `Qwen/Qwen2.5-7B-Instruct` (judge)
 
 **Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
+
+**Sparse baseline**: SPLADE (always included in evaluation)
 
 ---
 
@@ -227,7 +211,7 @@ retrieval/
   splade_retriever.py            SPLADE sparse baseline
   base_retriever.py              BaseRetriever interface
   chunking_evidence.py           EUR-Lex HTML → structured CSV chunks
-  chunking_recommendations.py    Recommendation CSV loader
+  chunking_recommendations.py    whitepaper recommendations TXT → structured CSV
 
 indexing/
   embeddings.py                  embed_texts, get_embed_model
@@ -238,14 +222,15 @@ evaluation/
   experiment_unified.py          unified evaluation orchestrator (gold + MTEB + ablation)
   experiment_helpers.py          shared stats/metrics/retriever-building helpers
   experiment_mteb.py             MTEB dataset loading and chunk-level evaluation
-  experiment_baselines.py        SPLADE baseline evaluation helpers
+  experiment_baselines.py        SPLADE baseline evaluation
   experiment_robustness.py       robustness analysis (bootstrap CI, permutation tests)
   experiment_exports.py          chunk export helpers
-  experiment_commands.py         thin CLI entrypoints (download-models)
+  experiment_commands.py         thin CLI entrypoints (merge-eval, download-models)
   full_study.py                  thesis full-study CLI (retrieval-study, prompt-study, k-compare)
+  generate_judge_from_classifications.py  re-run LLM judge on existing classification CSV
   evaluation.py                  core evaluation logic (gold standard loader, per-query scoring)
   full_eval.py                   ablation table, significance markers, report formatting
-  metrics.py                     Hit@k, Recall, MRR, NDCG, bootstrap CI, permutation test (not all in use)
+  metrics.py                     Hit@k, Recall, MRR, NDCG, bootstrap CI, permutation test
 
 rag/
   classifier.py                  Alignment classifier
