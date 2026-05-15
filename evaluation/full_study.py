@@ -48,7 +48,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_ret.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_thesis")
     p_ret.add_argument("--old-metrics-csv", type=Path, default=OUTPUT_DIR / "eval_unified_old" / "metrics_all.csv")
     p_ret.add_argument("--ranking-k", type=int, default=10)
-    p_ret.add_argument("--force-cpu", action="store_true")
     p_ret.add_argument("--with-robustness-all-models", action="store_true")
 
     p_prompt = sub.add_parser("prompt-study", help="Analyze prompt classification and judge outputs")
@@ -92,7 +91,6 @@ def _build_unified_args(args: argparse.Namespace) -> argparse.Namespace:
         auto_build_indices=True,
         evidence_csv=Path(EVIDENCE_CSV),
         include_splade=True,
-        force_cpu=bool(args.force_cpu),
         with_robustness=False,
     )
 

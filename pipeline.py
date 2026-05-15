@@ -77,7 +77,6 @@ def main() -> None:
         help="flat_baseline (default) or split_evidence_retrieval",
     )
     p_eval.add_argument("--evidence-csv", type=Path, default=EVIDENCE_CSV)
-    p_eval.add_argument("--force-cpu", action="store_true", help="Disable GPU")
     p_eval.add_argument(
         "--with-robustness", action="store_true",
         help="Also run ablation significance tests (paired permutation + bootstrap CI)",

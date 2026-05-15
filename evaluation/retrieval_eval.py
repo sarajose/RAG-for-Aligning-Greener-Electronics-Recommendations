@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -238,15 +237,9 @@ def _run_splade_eval(
 
 def cmd_unified_eval(args: argparse.Namespace) -> None:
     """Run unified evaluation: gold standard, MTEB, whitepaper exports, ablation."""
-    if args.force_cpu:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
     try:
         import torch
-        cuda_available = bool(torch.cuda.is_available())
-        if args.force_cpu:
-            print("[setup] force_cpu=True; CUDA disabled for this run.")
-        elif cuda_available:
+        if torch.cuda.is_available():
             print(f"[setup] CUDA available: True (count={torch.cuda.device_count()}) | using GPU: {torch.cuda.get_device_name(0)}")
         else:
             print("[setup] CUDA available: False | running on CPU.")
