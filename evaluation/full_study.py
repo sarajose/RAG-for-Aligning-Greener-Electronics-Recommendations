@@ -32,9 +32,6 @@ from config import (
     EVIDENCE_CSV,
     GOLD_STANDARD_CSV,
     OUTPUT_DIR,
-    SPLADE_MAX_LENGTH,
-    SPLADE_MODEL,
-    WHITEPAPER_RECOMMENDATIONS_CSV,
 )
 from evaluation.experiment_commands import cmd_robustness, cmd_unified_eval
 
@@ -51,13 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ret.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_thesis")
     p_ret.add_argument("--old-metrics-csv", type=Path, default=OUTPUT_DIR / "eval_unified_old" / "metrics_all.csv")
     p_ret.add_argument("--ranking-k", type=int, default=10)
-    p_ret.add_argument("--skip-mteb", action="store_true")
-    p_ret.add_argument("--skip-reranker", action="store_true")
-    p_ret.add_argument("--auto-build-indices", action="store_true")
-    p_ret.add_argument("--include-splade", action="store_true")
     p_ret.add_argument("--force-cpu", action="store_true")
     p_ret.add_argument("--with-robustness-all-models", action="store_true")
-    p_ret.add_argument("--robust-k", type=int, default=10)
 
     p_prompt = sub.add_parser("prompt-study", help="Analyze prompt classification and judge outputs")
     p_prompt.add_argument("--prompt-csv", type=Path, required=True)
@@ -90,26 +82,16 @@ def _filter_available_models(models: list[str]) -> list[str]:
 def _build_unified_args(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         models=_filter_available_models(args.models),
-        gold_csv=Path(GOLD_STANDARD_CSV),
-        whitepaper_csv=Path(WHITEPAPER_RECOMMENDATIONS_CSV),
         output_dir=Path(args.output_dir),
         top_k=DEFAULT_STUDY_TOP_K,
         rerank_top=DEFAULT_STUDY_RERANK_TOP,
-        export_k=DEFAULT_STUDY_EXPORT_K,
         k_values=sorted(set(EVAL_K_VALUES)),
-        # mteb_dataset="mteb/legalbench_consumer_contracts_qa",
-        mteb_dataset="mteb/MuPLeR-retrieval",
-        mteb_split="test",
         max_corpus=None,
-        full_mteb=False,
-        skip_whitepaper=False,
-        skip_mteb=bool(args.skip_mteb),
-        skip_reranker=bool(args.skip_reranker),
-        auto_build_indices=bool(args.auto_build_indices),
+        skip_mteb=False,
+        skip_reranker=False,
+        auto_build_indices=True,
         evidence_csv=Path(EVIDENCE_CSV),
-        include_splade=bool(args.include_splade),
-        splade_model=SPLADE_MODEL,
-        splade_max_length=SPLADE_MAX_LENGTH,
+        include_splade=True,
         force_cpu=bool(args.force_cpu),
         with_robustness=False,
     )
@@ -122,19 +104,17 @@ def _run_robustness_for_models(
     output_dir: Path,
     top_k: int,
     rerank_top: int,
-    robust_k: int,
-    skip_reranker: bool,
 ) -> None:
     for model in models:
         print(f"[robustness] Running per-query robustness for model={model}")
         robust_args = argparse.Namespace(
             model=model,
             gold_csv=gold_csv,
-            k=robust_k,
+            k=10,
             top_k=top_k,
             rerank_top=rerank_top,
             output_dir=output_dir / "robustness",
-            skip_reranker=skip_reranker,
+            skip_reranker=False,
         )
         cmd_robustness(robust_args)
 
@@ -235,12 +215,10 @@ def run_retrieval_study(args: argparse.Namespace) -> None:
     if args.with_robustness_all_models:
         _run_robustness_for_models(
             models=unified_args.models,
-            gold_csv=Path(unified_args.gold_csv),
+            gold_csv=Path(GOLD_STANDARD_CSV),
             output_dir=out_dir,
             top_k=unified_args.top_k,
             rerank_top=unified_args.rerank_top,
-            robust_k=args.robust_k,
-            skip_reranker=unified_args.skip_reranker,
         )
 
     metrics_csv = out_dir / "metrics_all.csv"

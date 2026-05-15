@@ -1,4 +1,4 @@
-﻿"""Unified evaluation command and export helpers."""
+"""Unified evaluation command and export helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from config import DEFAULT_RERANK_TOP, DEFAULT_TOP_K, EMBEDDING_MODELS, SPLADE_MAX_LENGTH, SPLADE_MODEL
+from config import (
+    DEFAULT_RERANK_TOP,
+    DEFAULT_TOP_K,
+    EMBEDDING_MODELS,
+    GOLD_STANDARD_CSV,
+    RRF_K,
+    WHITEPAPER_RECOMMENDATIONS_CSV,
+)
 from embedding_indexing import build_index, load_indices
 from evaluation.evaluation import evaluate_retrieval
 from evaluation.experiment_exports import export_gold_retrieved_chunks, export_whitepaper_retrieved_chunks
@@ -30,13 +37,18 @@ from evaluation.experiment_mteb import (
     _evaluate_mteb_chunk_level,
 )
 from retrieval.reranker import RerankedRetriever, Reranker
-from evaluation.experiment_baselines import _run_splade_eval, _run_colbert_eval
+from evaluation.experiment_baselines import _run_splade_eval
+
+MTEB_DATASET = "mteb/MuPLeR-retrieval"
+MTEB_SPLIT = "test"
+EXPORT_K = 10
+MTEB_EMBED_BATCH_SIZE = 32
+MTEB_DEVICE = "auto"
+MTEB_PRECISION = "float32"
 
 
 def cmd_unified_eval(args: argparse.Namespace) -> None:
     """Run unified evaluation across gold, MTEB, and whitepaper exports."""
-    if args.full_mteb:
-        args.max_corpus = None
     if args.force_cpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -55,8 +67,6 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 print("[setup] CUDA available: False | running on CPU.")
     except Exception as exc:
         print(f"[setup] Could not probe CUDA status: {exc}")
-
-    mteb_embed_batch_size = max(1, int(getattr(args, "mteb_embed_batch_size", 32)))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     checkpoints_dir = args.output_dir / "checkpoints"
@@ -124,48 +134,29 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "models": args.models,
         "k_values": sorted(set(args.k_values)),
-        "mteb_dataset": args.mteb_dataset,
-        "mteb_split": args.mteb_split,
-        "mteb_max_corpus": args.max_corpus,
-        "mteb_embed_batch_size": mteb_embed_batch_size,
-        "full_mteb": bool(args.full_mteb),
+        "mteb_dataset": MTEB_DATASET,
+        "mteb_split": MTEB_SPLIT,
         "top_k": args.top_k,
         "rerank_top": args.rerank_top,
-        "export_k": args.export_k,
-        "skip_reranker": bool(args.skip_reranker),
-        "skip_mteb": bool(args.skip_mteb),
-        "skip_whitepaper": bool(args.skip_whitepaper),
-        "force_cpu": bool(args.force_cpu),
-        "auto_build_indices": bool(args.auto_build_indices),
-        "include_splade": bool(getattr(args, "include_splade", False)),
-        "splade_model": str(getattr(args, "splade_model", SPLADE_MODEL)),
-        "splade_max_length": int(getattr(args, "splade_max_length", SPLADE_MAX_LENGTH)),
+        "export_k": EXPORT_K,
         "checkpoints_dir": str(checkpoints_dir),
         "outputs": {},
     }
 
+    print("[setup] Loading cross-encoder reranker...")
     reranker = None
-    if not args.skip_reranker:
-        print("[setup] Loading cross-encoder reranker...")
-        try:
-            reranker = Reranker()
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "outofmemory" in msg or "cuda out of memory" in msg:
-                print("[warn] CUDA OOM while loading reranker; continuing with --skip-reranker behavior.")
-                reranker = None
-            else:
-                raise
+    try:
+        reranker = Reranker()
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "outofmemory" in msg or "cuda out of memory" in msg:
+            print("[warn] CUDA OOM while loading reranker; continuing without reranker.")
+        else:
+            raise
 
     for model_key in args.models:
         print(f"\n=== Model: {model_key} ===")
         if not _indices_exist(model_key):
-            if not args.auto_build_indices:
-                raise FileNotFoundError(
-                    f"Missing indices for model '{model_key}'. Build them first with "
-                    f"'python main.py build -i {args.evidence_csv} -m {model_key}' "
-                    "or rerun with --auto-build-indices."
-                )
             print(f"[build] Missing indices for {model_key}; building now...")
             build_index(args.evidence_csv, model_key)
             _write_step_checkpoint(f"indices_ready__{model_key}")
@@ -198,12 +189,6 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             _write_step_checkpoint(f"faiss_preflight__{model_key}", {"status": "ok", "details": reason})
         else:
             print(f"[warn] FAISS preflight failed for {model_key}: {reason}")
-            if not args.auto_build_indices:
-                raise RuntimeError(
-                    f"FAISS preflight failed for '{model_key}'. Details: {reason}. "
-                    "Rebuild with `python main.py build -i <evidence_csv> -m <model_key>` "
-                    "or rerun evaluation with --auto-build-indices."
-                )
             print(f"[sanity] Rebuilding indices for {model_key} due to failed preflight...")
             build_index(args.evidence_csv, model_key)
             ok_after, reason_after = _faiss_preflight_ok(model_key)
@@ -222,7 +207,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             reranker=reranker,
             top_k=args.top_k,
             rerank_top=args.rerank_top,
-            rrf_k=getattr(args, "rrf_k", 60),
+            rrf_k=RRF_K,
             retrieval_mode=getattr(args, "retrieval_mode", "flat_baseline"),
         )
 
@@ -235,7 +220,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
             print(f"[gold-doc] Evaluating {method_name} ...")
             metrics_by_k = evaluate_retrieval(
                 retriever,
-                gold_path=args.gold_csv,
+                gold_path=GOLD_STANDARD_CSV,
                 k_values=sorted(set(args.k_values)),
                 top_k_retrieve=max(args.top_k * 3, 30),
                 rerank_top=args.rerank_top,
@@ -268,113 +253,99 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
                 retriever=retrievers[export_method],
                 model_key=model_key,
                 method=export_method,
-                gold_csv=args.gold_csv,
+                gold_csv=GOLD_STANDARD_CSV,
                 out_csv=gold_export_csv,
-                top_k=args.export_k,
+                top_k=EXPORT_K,
             )
             _write_step_checkpoint(gold_export_step, {"artifact": str(gold_export_csv)})
 
-        if not args.skip_whitepaper:
-            whitepaper_export_csv = args.output_dir / f"whitepaper_retrieved_chunks_{model_key}_{export_method}.csv"
-            whitepaper_export_step = f"export_whitepaper__{model_key}__{export_method}"
-            if _step_done(whitepaper_export_step, [whitepaper_export_csv]):
-                print(f"[resume] Skipping existing whitepaper export: {whitepaper_export_csv}")
-            else:
-                export_whitepaper_retrieved_chunks(
-                    retriever=retrievers[export_method],
-                    model_key=model_key,
-                    method=export_method,
-                    whitepaper_csv=args.whitepaper_csv,
-                    out_csv=whitepaper_export_csv,
-                    top_k=args.export_k,
+        whitepaper_export_csv = args.output_dir / f"whitepaper_retrieved_chunks_{model_key}_{export_method}.csv"
+        whitepaper_export_step = f"export_whitepaper__{model_key}__{export_method}"
+        if _step_done(whitepaper_export_step, [whitepaper_export_csv]):
+            print(f"[resume] Skipping existing whitepaper export: {whitepaper_export_csv}")
+        else:
+            export_whitepaper_retrieved_chunks(
+                retriever=retrievers[export_method],
+                model_key=model_key,
+                method=export_method,
+                whitepaper_csv=WHITEPAPER_RECOMMENDATIONS_CSV,
+                out_csv=whitepaper_export_csv,
+                top_k=EXPORT_K,
+            )
+            _write_step_checkpoint(whitepaper_export_step, {"artifact": str(whitepaper_export_csv)})
+
+        for mteb_method in list(retrievers.keys()):
+            mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv"
+            mteb_step = f"mteb_chunk__{model_key}__{mteb_method}"
+            if _has_metrics("mteb_legal", "chunk", model_key, mteb_method) and _step_done(mteb_step, [mteb_out_csv]):
+                print(f"[resume] Skipping existing MTEB eval: {model_key}/{mteb_method}")
+                continue
+            try:
+                print(
+                    f"[mteb] Starting chunk-level eval for model={model_key}, method={mteb_method}, "
+                    f"dataset={MTEB_DATASET}, split={MTEB_SPLIT}",
+                    flush=True,
                 )
-                _write_step_checkpoint(whitepaper_export_step, {"artifact": str(whitepaper_export_csv)})
-
-        if not args.skip_mteb:
-            for mteb_method in list(retrievers.keys()):
-                mteb_out_csv = args.output_dir / f"mteb_retrieved_chunks_{model_key}_{mteb_method}.csv"
-                mteb_step = f"mteb_chunk__{model_key}__{mteb_method}"
-                if _has_metrics("mteb_legal", "chunk", model_key, mteb_method) and _step_done(mteb_step, [mteb_out_csv]):
-                    print(f"[resume] Skipping existing MTEB eval: {model_key}/{mteb_method}")
-                    continue
-                try:
-                    print(
-                        f"[mteb] Starting chunk-level eval for model={model_key}, method={mteb_method}, "
-                        f"dataset={args.mteb_dataset}, split={args.mteb_split}",
-                        flush=True,
-                    )
-                    mteb_retriever = _build_mteb_retriever(
+                mteb_retriever = _build_mteb_retriever(
+                    model_key=model_key,
+                    method=mteb_method,
+                    reranker=reranker,
+                    dataset_id=MTEB_DATASET,
+                    max_corpus=None,
+                    embed_batch_size=MTEB_EMBED_BATCH_SIZE,
+                    embed_device=MTEB_DEVICE,
+                    embed_precision=MTEB_PRECISION,
+                )
+                mteb_metrics = _evaluate_mteb_chunk_level(
+                    retriever=mteb_retriever,
+                    dataset_id=MTEB_DATASET,
+                    split_name=MTEB_SPLIT,
+                    k_values=sorted(set(args.k_values)),
+                    top_k=max(args.top_k * 3, 30),
+                    max_corpus=None,
+                    model_key=model_key,
+                    method=mteb_method,
+                    out_retrieved_csv=mteb_out_csv,
+                )
+                metrics_rows.extend(
+                    _metrics_to_rows(
+                        mteb_metrics,
+                        dataset="mteb_legal",
+                        level="chunk",
                         model_key=model_key,
                         method=mteb_method,
-                        reranker=reranker,
-                        dataset_id=args.mteb_dataset,
-                        max_corpus=args.max_corpus,
-                        embed_batch_size=mteb_embed_batch_size,
-                        embed_device=getattr(args, "mteb_device", "auto"),
-                        embed_precision=getattr(args, "mteb_precision", "float32"),
                     )
-                    mteb_metrics = _evaluate_mteb_chunk_level(
-                        retriever=mteb_retriever,
-                        dataset_id=args.mteb_dataset,
-                        split_name=args.mteb_split,
-                        k_values=sorted(set(args.k_values)),
-                        top_k=max(args.top_k * 3, 30),
-                        max_corpus=args.max_corpus,
-                        model_key=model_key,
-                        method=mteb_method,
-                        out_retrieved_csv=mteb_out_csv,
-                    )
-                    metrics_rows.extend(
-                        _metrics_to_rows(
-                            mteb_metrics,
-                            dataset="mteb_legal",
-                            level="chunk",
-                            model_key=model_key,
-                            method=mteb_method,
-                        )
-                    )
-                    _checkpoint_metrics(f"mteb eval {model_key}/{mteb_method}")
-                    _write_step_checkpoint(mteb_step, {"artifact": str(mteb_out_csv)})
-                    print(
-                        f"[mteb] Finished chunk-level eval for model={model_key}, method={mteb_method}",
-                        flush=True,
-                    )
-                except Exception as exc:
-                    msg = str(exc).lower()
-                    if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
-                        print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to memory limits: {exc}")
-                    else:
-                        print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to non-fatal error: {exc}")
-                    _write_step_checkpoint(
-                        mteb_step,
-                        {
-                            "status": "skipped",
-                            "error": str(exc),
-                        },
-                    )
-                    continue
+                )
+                _checkpoint_metrics(f"mteb eval {model_key}/{mteb_method}")
+                _write_step_checkpoint(mteb_step, {"artifact": str(mteb_out_csv)})
+                print(
+                    f"[mteb] Finished chunk-level eval for model={model_key}, method={mteb_method}",
+                    flush=True,
+                )
+            except Exception as exc:
+                msg = str(exc).lower()
+                if isinstance(exc, MemoryError) or "out of memory" in msg or "cuda out of memory" in msg:
+                    print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to memory limits: {exc}")
+                else:
+                    print(f"[warn] Skipping MTEB for model={model_key} method={mteb_method} due to non-fatal error: {exc}")
+                _write_step_checkpoint(
+                    mteb_step,
+                    {
+                        "status": "skipped",
+                        "error": str(exc),
+                    },
+                )
+                continue
 
-    if getattr(args, "include_splade", False):
-        _run_splade_eval(
-            args,
-            reranker,
-            metrics_rows,
-            _checkpoint_metrics,
-            has_metrics_fn=_has_metrics,
-            step_done_fn=_step_done,
-            mark_step_fn=_write_step_checkpoint,
-        )
-
-    if getattr(args, "include_colbert", False):
-        _run_colbert_eval(
-            args,
-            reranker,
-            metrics_rows,
-            _checkpoint_metrics,
-            has_metrics_fn=_has_metrics,
-            step_done_fn=_step_done,
-            mark_step_fn=_write_step_checkpoint,
-        )
+    _run_splade_eval(
+        args,
+        reranker,
+        metrics_rows,
+        _checkpoint_metrics,
+        has_metrics_fn=_has_metrics,
+        step_done_fn=_step_done,
+        mark_step_fn=_write_step_checkpoint,
+    )
 
     metrics_df = pd.DataFrame(metrics_rows)
     metrics_df.to_csv(metrics_csv, index=False)
@@ -444,7 +415,7 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
     ablation_all_k_csv = args.output_dir / "ablation_table_all_k.csv"
     ablation_all_k_df.to_csv(ablation_all_k_csv, index=False)
 
-    # Publishable ablation table (integrated from evaluation.publishable_eval)
+    # Publishable ablation table
     try:
         ablation_k = 10 if 10 in set(args.k_values) else max(set(args.k_values))
         ablation_df = build_ablation_table(metrics_csv, k=ablation_k)
@@ -452,10 +423,10 @@ def cmd_unified_eval(args: argparse.Namespace) -> None:
         if args.with_robustness:
             per_query_csv = args.output_dir / "per_query_scores_for_ablation.csv"
             per_query_df = collect_per_query_scores(
-                gold_csv=args.gold_csv,
+                gold_csv=GOLD_STANDARD_CSV,
                 model_keys=args.models,
                 k=ablation_k,
-                skip_reranker=args.skip_reranker,
+                skip_reranker=False,
                 out_csv=per_query_csv,
             )
             ablation_out = add_significance_markers(ablation_df, per_query_df)

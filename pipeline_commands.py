@@ -5,7 +5,7 @@ import gc
 from pathlib import Path
 from typing import Any
 
-from config import DEFAULT_MODEL_KEY, EVIDENCE_CSV, INDEX_DIR
+from config import DEFAULT_MODEL_KEY, EVIDENCE_CSV, GOLD_STANDARD_CSV, INDEX_DIR, WHITEPAPER_RECOMMENDATIONS_CSV
 from data_models import ClassificationResult
 from embedding_indexing import build_index, build_merged_index
 from evaluation.experiment_commands import (
@@ -16,7 +16,6 @@ from evaluation.experiment_commands import (
 )
 from pipeline_io import (
     load_recommendations,
-    save_judge_results_csv,
     save_prompt_output_csv,
     save_retrieved_chunks_csv,
 )
@@ -76,8 +75,6 @@ def _retrieve_all(
     top_k: int,
     rerank_top: int,
     retrieval_mode: str,
-    max_chunks_per_doc: int,
-    near_dup_suppression: bool,
     inner_retrieval_method: str = "rrf",
 ) -> list[Any]:
     """Run retrieval for all recommendations with consistent progress output."""
@@ -90,8 +87,8 @@ def _retrieve_all(
                 top_k=top_k,
                 rerank_top=rerank_top,
                 retrieval_mode=retrieval_mode,
-                max_chunks_per_doc=max_chunks_per_doc,
-                near_dup_suppression=near_dup_suppression,
+                max_chunks_per_doc=2,
+                near_dup_suppression=False,
                 inner_retrieval_method=inner_retrieval_method,
             )
         )
@@ -131,12 +128,12 @@ def _build_robustness_args(args: argparse.Namespace, robust_model: str) -> argpa
     """Construct arguments for robustness sub-command."""
     return argparse.Namespace(
         model=robust_model,
-        gold_csv=Path(args.gold_csv),
-        k=args.robust_k,
+        gold_csv=Path(GOLD_STANDARD_CSV),
+        k=10,
         top_k=args.top_k,
         rerank_top=args.rerank_top,
         output_dir=Path(args.output_dir) / "robustness",
-        skip_reranker=args.skip_reranker,
+        skip_reranker=False,
     )
 
 
@@ -164,27 +161,20 @@ def cmd_prompt(args: argparse.Namespace) -> None:
     recs = load_recommendations(args.input)
     print(f"[prompt] Loaded {len(recs)} recommendations")
 
-    retriever = HybridRetriever.from_disk(args.model, use_reranker=not args.no_rerank)
+    retriever = HybridRetriever.from_disk(args.model, use_reranker=True)
     retrieval_results = _retrieve_all(
         retriever,
         recs,
         top_k=args.top_k,
         rerank_top=args.rerank_top,
         retrieval_mode=args.retrieval_mode,
-        max_chunks_per_doc=args.max_chunks_per_doc,
-        near_dup_suppression=args.near_dup_suppression,
         inner_retrieval_method=getattr(args, "inner_retrieval_method", "rrf"),
     )
     # Free the retriever (embedding model + reranker) before loading the LLM.
-    # On a 4 GiB GPU both cannot coexist; explicit deletion + cache flush ensures
-    # the VRAM is available before AlignmentClassifier loads.
     del retriever
     _free_gpu("after retriever")
 
-    cls_results: list[ClassificationResult] = []
-    if not args.retrieve_only:
-        # _classify_all deletes the classifier internally before returning.
-        cls_results = _classify_all(recs, retrieval_results)
+    cls_results = _classify_all(recs, retrieval_results)
 
     save_prompt_output_csv(args.output, recs, retrieval_results, cls_results)
     print(f"[prompt] Saved -> {args.output}")
@@ -193,11 +183,10 @@ def cmd_prompt(args: argparse.Namespace) -> None:
     save_retrieved_chunks_csv([r.text for r in recs], retrieval_results, chunks_path, top_k=args.top_k)
     print(f"[prompt] Retrieved chunks -> {chunks_path}")
 
-    if args.judge and cls_results:
+    if args.judge:
         from rag.llm_judge import LLMJudge
 
         judge_path = args.output.parent / f"{args.output.stem}_judge.csv"
-        # Remove stale file so append_judge_result_csv starts fresh.
         if judge_path.exists():
             judge_path.unlink()
 
@@ -211,33 +200,22 @@ def cmd_prompt(args: argparse.Namespace) -> None:
             else:
                 print(f"[prompt] Judge -> {judge_path} ({len(judge_results)} rows)")
         except Exception as exc:
-            logger.error("Judge stage failed: %s", exc)
             print(f"[prompt] Judge stage ERROR: {exc}")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
     """Run unified retrieval evaluation and optional robustness analysis."""
-    _require_file(Path(args.gold_csv), "gold-standard CSV")
-    if not args.skip_whitepaper:
-        _require_file(Path(args.whitepaper_csv), "whitepaper recommendations CSV")
-    if args.auto_build_indices:
-        _require_file(Path(args.evidence_csv), "evidence CSV for auto-build")
+    _require_file(GOLD_STANDARD_CSV, "gold-standard CSV")
+    _require_file(WHITEPAPER_RECOMMENDATIONS_CSV, "whitepaper recommendations CSV")
+    _require_file(Path(args.evidence_csv), "evidence CSV for auto-build")
 
     print(f"[evaluate] Unified outputs directory: {args.output_dir}")
 
     cmd_unified_eval(args)
 
-    if args.remote_eval_csv:
-        merge_args = argparse.Namespace(
-            remote_csv=args.remote_eval_csv,
-            output_dir=Path(args.output_dir),
-            ranking_k=10,
-        )
-        cmd_merge_eval(merge_args)
-
     if not args.with_robustness:
         return
 
-    robust_model = args.robust_model or (args.models[0] if args.models else DEFAULT_MODEL_KEY)
+    robust_model = args.models[0] if args.models else DEFAULT_MODEL_KEY
     robust_args = _build_robustness_args(args, robust_model)
     cmd_robustness(robust_args)

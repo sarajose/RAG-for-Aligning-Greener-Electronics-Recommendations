@@ -20,13 +20,9 @@ from config import (
     DEFAULT_TOP_K,
     EMBEDDING_MODELS,
     EVAL_K_VALUES,
-    GOLD_STANDARD_CSV,
     EVIDENCE_CSV,
     OUTPUT_DIR,
     RETRIEVAL_MODES,
-    RRF_K,
-    SPLADE_MAX_LENGTH,
-    SPLADE_MODEL,
     WHITEPAPER_RECOMMENDATIONS_CSV,
 )
 from pipeline_commands import cmd_build, cmd_download_models, cmd_evaluate, cmd_merge_eval, cmd_prompt
@@ -60,14 +56,10 @@ def main() -> None:
         "--retrieval-mode", default=DEFAULT_RETRIEVAL_MODE, choices=RETRIEVAL_MODES,
         help="flat_baseline (default) or split_evidence_retrieval",
     )
-    p_prompt.add_argument("--no-rerank", action="store_true", help="Skip cross-encoder reranking")
     p_prompt.add_argument(
         "--inner-retrieval-method", default="rrf", choices=["rrf", "dense", "bm25"],
         help="Inner retrieval method used within each evidence group (split_evidence_retrieval only)",
     )
-    p_prompt.add_argument("--max-chunks-per-doc", type=int, default=2)
-    p_prompt.add_argument("--near-dup-suppression", action="store_true")
-    p_prompt.add_argument("--retrieve-only", action="store_true", help="Skip LLM classification")
     p_prompt.add_argument("--judge", action="store_true", help="Run LLM judge after classification")
 
     # ── evaluate ───────────────────────────────────────────────────────────
@@ -76,64 +68,19 @@ def main() -> None:
         "--models", nargs="+", default=[DEFAULT_MODEL_KEY, "e5-large-v2", "e5-mistral"],
         help="Embedding model keys to compare (must have pre-built indices)",
     )
-    p_eval.add_argument("--gold-csv", type=Path, default=GOLD_STANDARD_CSV)
-    p_eval.add_argument("--whitepaper-csv", type=Path, default=WHITEPAPER_RECOMMENDATIONS_CSV)
     p_eval.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_unified")
     p_eval.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     p_eval.add_argument("--rerank-top", type=int, default=DEFAULT_RERANK_TOP)
-    p_eval.add_argument("--export-k", type=int, default=10)
     p_eval.add_argument("--k-values", type=int, nargs="+", default=EVAL_K_VALUES)
-    p_eval.add_argument(
-        "--mteb-dataset",
-        default="mteb/MuPLeR-retrieval",
-        help="MTEB dataset HF id or a local dataset directory saved with datasets.load_from_disk.",
-    )
-    p_eval.add_argument("--mteb-split", default="test")
-    p_eval.add_argument("--max-corpus", type=int, default=20000)
-    p_eval.add_argument(
-        "--mteb-embed-batch-size",
-        type=int,
-        default=32,
-        help="Embedding batch size used while building MTEB dense indices (lower = less memory).",
-    )
-    p_eval.add_argument(
-        "--mteb-device",
-        choices=["auto", "cpu", "cuda"],
-        default="auto",
-        help="Device used for MTEB embedding; auto uses the model default and falls back to CPU on OOM.",
-    )
-    p_eval.add_argument(
-        "--mteb-precision",
-        choices=["float32", "int8", "uint8", "binary", "ubinary"],
-        default="float32",
-        help="Embedding precision used by SentenceTransformer.encode during MTEB building.",
-    )
     p_eval.add_argument(
         "--retrieval-mode", default=DEFAULT_RETRIEVAL_MODE, choices=RETRIEVAL_MODES,
         help="flat_baseline (default) or split_evidence_retrieval",
     )
-    p_eval.add_argument("--full-mteb", action="store_true")
-    p_eval.add_argument("--skip-whitepaper", action="store_true")
-    p_eval.add_argument("--skip-mteb", action="store_true", help="Skip MTEB legal tasks (faster)")
-    p_eval.add_argument("--skip-reranker", action="store_true", help="Skip cross-encoder reranking")
-    p_eval.add_argument("--auto-build-indices", action="store_true")
     p_eval.add_argument("--evidence-csv", type=Path, default=EVIDENCE_CSV)
-    p_eval.add_argument("--include-splade", action="store_true")
-    p_eval.add_argument("--include-colbert", action="store_true",
-                        help="Include BGE-M3 ColBERT multi-vector baseline (requires FlagEmbedding)")
-    p_eval.add_argument("--splade-model", default=SPLADE_MODEL)
-    p_eval.add_argument("--splade-max-length", type=int, default=SPLADE_MAX_LENGTH)
-    p_eval.add_argument("--remote-eval-csv", nargs="+", default=None)
     p_eval.add_argument("--force-cpu", action="store_true", help="Disable GPU")
     p_eval.add_argument(
         "--with-robustness", action="store_true",
         help="Also run ablation significance tests (paired permutation + bootstrap CI)",
-    )
-    p_eval.add_argument("--robust-model", default=None)
-    p_eval.add_argument("--robust-k", type=int, default=10)
-    p_eval.add_argument(
-        "--rrf-k", type=int, default=RRF_K,
-        help="RRF smoothing constant for grid search ({10,30,60,100}); default: 60",
     )
 
     # ── merge-eval ────────────────────────────────────────────────────────

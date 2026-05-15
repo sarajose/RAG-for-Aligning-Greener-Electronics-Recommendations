@@ -266,31 +266,3 @@ def load_whitepaper_recommendations(csv_path: Path) -> list[dict[str, str]]:
         )
     return rows
 
-
-def format_retrieval_report(
-    metrics_by_k: dict[int, RetrievalMetrics],
-    title: str = "Retrieval Evaluation",
-) -> str:
-    """Format retrieval metrics in a compact table."""
-    if not metrics_by_k:
-        return f"{title}: no metrics"
-
-    m0 = next(iter(metrics_by_k.values()))
-    lines = [
-        "",
-        "=" * 82,
-        f"  {title}  (n = {m0.num_queries} queries)",
-        "=" * 82,
-        f"{'k':>4} | {'Hit@k':>7} | {'Recall':>7} | {'Prec':>7} | {'MRR':>7} | {'MAP':>7} | {'NDCG':>7} | {'MR':>7}",
-        "-" * 82,
-    ]
-
-    for k, m in sorted(metrics_by_k.items()):
-        mr_str = f"{m.mean_rank:>7.1f}" if m.mean_rank != float("inf") else "    inf"
-        lines.append(
-            f"{k:>4} | {m.hit_rate:>7.3f} | {m.recall:>7.3f} | {m.precision:>7.3f} | "
-            f"{m.mrr:>7.3f} | {m.map_score:>7.3f} | {m.ndcg:>7.3f} | {mr_str}"
-        )
-
-    lines.append("=" * 82)
-    return "\n".join(lines)
