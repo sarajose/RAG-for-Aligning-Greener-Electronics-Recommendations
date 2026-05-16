@@ -17,9 +17,6 @@ Chunking strategy
      "shall / except / where" clauses remain together.
   5. Write a flat CSV: one provision per row with full hierarchy context.
 
-
-LangChain <---
-
 Usage
 ─────
   pip install beautifulsoup4 lxml
@@ -28,13 +25,11 @@ Usage
 """
 
 from __future__ import annotations
-
 import argparse
 import csv
 import re
 from pathlib import Path
 from hashlib import sha256
-
 from bs4 import BeautifulSoup, Tag
 
 # Conservative text budget to avoid model-side hard truncation for 512-token
@@ -51,7 +46,6 @@ CHUNK_OVERLAP_TOKENS = 80
 CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * APPROX_CHARS_PER_TOKEN
 
 # 1. LOADING & METADATA
-
 def load_html(path: Path) -> BeautifulSoup:
     """Read an HTML file and return a parsed DOM tree."""
     with open(path, encoding="utf-8") as f:
@@ -65,7 +59,6 @@ def generate_chunk_id(doc_name: str, article: str, para: str, text: str) -> str:
     txt_hash = sha256(text.encode()).hexdigest()[:8]
     return f"{base}|{txt_hash}"
 
-
 def extract_document_title(soup: BeautifulSoup) -> str:
     """Get the full legislation title from the EUR-Lex header."""
     parts: list[str] = []
@@ -78,7 +71,6 @@ def extract_document_title(soup: BeautifulSoup) -> str:
             parts.append(txt)
     return " — ".join(parts) if parts else ""
 
-
 # Map of known abbreviation fragments → canonical short names.
 # Extend this dict when adding new legislation types.
 _KNOWN_LABELS: dict[str, str] = {
@@ -90,7 +82,6 @@ _KNOWN_LABELS: dict[str, str] = {
     "CAEP":  "CAEP",
 }
 
-
 def infer_document_short_name(path: Path) -> str:
     """Derive a short label from the filename (e.g. 'WEEE', 'RoHS')."""
     stem = path.stem.upper()
@@ -100,21 +91,17 @@ def infer_document_short_name(path: Path) -> str:
     return stem.split("-")[0].strip()
 
 # 2. TEXT HELPERS
-
 _WS = re.compile(r"\s+")
 _ARROW = re.compile(r"[▼►◄▲][A-Z0-9]+\b")  # amendment markers ▼B, ►M2 …
-
 
 def clean(text: str) -> str:
     """Normalise whitespace, strip EUR-Lex amendment arrows, trim."""
     text = _ARROW.sub("", text)
     return _WS.sub(" ", text).strip()
 
-
 def tag_text(tag: Tag) -> str:
     """Recursively extract clean text from an HTML element."""
     return clean(tag.get_text())
-
 
 def _tail_overlap(text: str, overlap_chars: int) -> str:
     """Return the trailing ``overlap_chars`` characters snapped to a sentence start.
@@ -130,7 +117,6 @@ def _tail_overlap(text: str, overlap_chars: int) -> str:
     if m:
         tail = tail[m.end():]
     return tail.strip()
-
 
 def split_text_for_embedding_budget(
     text: str,
@@ -195,9 +181,7 @@ def split_text_for_embedding_budget(
 
     return chunks
 
-
-# 3. DOM NAVIGATION — hierarchy extraction
-
+# 3. DOM NAVIGATION: hierarchy extraction
 def find_chapter(article_tag: Tag) -> str:
     """Walk up from an article <div> to find its chapter/title heading.
 
@@ -218,7 +202,6 @@ def find_chapter(article_tag: Tag) -> str:
                 return " — ".join(parts)
         parent = parent.parent
     return ""
-
 
 def get_article_heading(art: Tag) -> tuple[str, str]:
     """Return (article_number, article_subtitle) for an article div.
@@ -245,9 +228,7 @@ def get_article_heading(art: Tag) -> tuple[str, str]:
             subtitle = tag_text(st)
     return number, subtitle
 
-
 # 4. PARAGRAPH & LIST-ITEM EXTRACTION
-
 def extract_paragraphs(article: Tag) -> list[dict]:
     """Extract numbered and unnumbered paragraphs from an article.
 
@@ -278,7 +259,7 @@ def extract_paragraphs(article: Tag) -> list[dict]:
         if text:
             paragraphs.append({"para_num": para_num, "text": text})
 
-    # ── Unnumbered standalone <p class="norm"> (including nested blocks)
+    # Unnumbered standalone <p class="norm"> (including nested blocks)
     for p in article.find_all("p", class_="norm"):
         # Skip paragraph wrappers already captured by numbered div.norm blocks.
         if p.find_parent("div", class_="norm"):
@@ -289,7 +270,7 @@ def extract_paragraphs(article: Tag) -> list[dict]:
         if txt and len(txt) > 15:
             paragraphs.append({"para_num": "", "text": txt})
 
-    # ── EUR-Lex oj-* layout variant used in several regulations/directives.
+    # EUR-Lex oj-* layout variant used in several regulations/directives.
     for p in article.find_all("p"):
         classes = {c.lower() for c in (p.get("class") or [])}
         if not classes:
@@ -313,14 +294,10 @@ def extract_paragraphs(article: Tag) -> list[dict]:
             para_num = m.group(1)
 
         paragraphs.append({"para_num": para_num, "text": txt})
-
     return paragraphs
 
-
 # 5. ANNEX EXTRACTION
-
 _MAX_ANNEX_CHARS = 2000  # truncate very large annexes
-
 
 def extract_annexes(soup: BeautifulSoup, doc_name: str, source_file: str, version: str) -> list[dict]:
     """Extract annexes as coarse-grained chunks (title + body preview)."""
@@ -357,7 +334,6 @@ def extract_annexes(soup: BeautifulSoup, doc_name: str, source_file: str, versio
                 "text": part,
             })
     return chunks
-
 
 def extract_generic_document_chunks(
     soup: BeautifulSoup,
@@ -462,13 +438,10 @@ def extract_generic_document_chunks(
                 "text": embedded_text,
                 # article_text is set by flush_section() once the full section is known
             })
-
     flush_section()
     return rows
 
-
 # 6. MAIN PARSE PIPELINE
-
 def parse_eurlex_html(path: Path) -> list[dict]:
     """Parse one EUR-Lex HTML file into a list of provision chunks.
 
@@ -550,15 +523,12 @@ def parse_eurlex_html(path: Path) -> list[dict]:
 
     return rows
 
-
 # MULTI-FILE PROCESSING & CSV OUTPUT
-
 FIELDNAMES = [
     "id", "document", "source_file", "version",
     "chapter", "article", "article_subtitle",
     "paragraph", "char_offset", "text", "article_text",
 ]
-
 
 def collect_all(input_path: Path) -> list[dict]:
     """Process one file or every .html file in a directory."""
@@ -577,7 +547,6 @@ def collect_all(input_path: Path) -> list[dict]:
         all_rows.extend(rows)
     return all_rows
 
-
 def write_csv(rows: list[dict], output_path: Path) -> None:
     """Write provision chunks to a CSV file."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -586,15 +555,12 @@ def write_csv(rows: list[dict], output_path: Path) -> None:
         w.writeheader()
         w.writerows(rows)
 
-
 def main(input_path: str, output_path: str) -> None:
     rows = collect_all(Path(input_path))
     write_csv(rows, Path(output_path))
     print(f"\nWrote {len(rows)} total chunks → {output_path}")
 
-
-# 8. CLI
-
+# CLI
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
         description="Chunk EUR-Lex legislation HTML into per-provision CSV rows."

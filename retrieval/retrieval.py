@@ -1,30 +1,11 @@
 """
 Hybrid retrieval engine for the policy-alignment pipeline.
-
 Combines dense vector search (FAISS), sparse lexical search (BM25Okapi),
 and optional cross-encoder reranking through Reciprocal Rank Fusion (RRF).
-
-Architecture::
-
-    Query ──┬──▶ BM25       ──┐
-            │                  ├──▶ RRF fusion ──▶ (optional) Rerank ──▶ Top-K
-            └──▶ Dense/FAISS ─┘
-
-Typical usage::
-
-    from retrieval import HybridRetriever
-
-    retriever = HybridRetriever.from_disk("bge-m3")
-    result = retriever.retrieve("ban lead in solder", top_k=10)
-    for chunk, score in zip(result.ranked_chunks, result.scores):
-        print(chunk.article, score)
 """
-
 from collections import defaultdict
 import re
-
 import numpy as np
-
 from sentence_transformers import SentenceTransformer, CrossEncoder
 import faiss
 from rank_bm25 import BM25Okapi
@@ -52,7 +33,6 @@ DEFAULT_MAX_CHUNKS_PER_DOC = int(getattr(_config, "DEFAULT_MAX_CHUNKS_PER_DOC", 
 DEFAULT_NEAR_DUP_SUPPRESSION = bool(getattr(_config, "DEFAULT_NEAR_DUP_SUPPRESSION", False))
 
 # Low-level search primitives
-
 def search_faiss(
     index: faiss.Index,
     query_embedding: np.ndarray,
@@ -61,7 +41,6 @@ def search_faiss(
     """Search a FAISS index; return (scores, indices) arrays of length k."""
     scores, indices = index.search(query_embedding.astype(np.float32), k)
     return scores[0], indices[0]
-
 
 def search_bm25(
     bm25: BM25Okapi,
@@ -74,24 +53,20 @@ def search_bm25(
     top_idx = np.argsort(scores)[::-1][:k]
     return scores[top_idx], top_idx
 
-
 # Reciprocal Rank Fusion
-
 def reciprocal_rank_fusion(
     ranked_lists: list[list[int]],
     k: int = RRF_K,
 ) -> list[tuple[int, float]]:
     """Fuse multiple ranked lists using RRF (Cormack et al., 2009).
 
-    Parameters
-    ----------
+    Parameters:
     ranked_lists : list[list[int]]
         Each inner list contains chunk indices ordered by relevance.
     k : int
         Smoothing constant (default 60).
 
-    Returns
-    -------
+    Returns:
     list[tuple[int, float]]
         ``(chunk_index, fused_score)`` pairs sorted descending by score.
     """
@@ -101,9 +76,7 @@ def reciprocal_rank_fusion(
             fused[idx] = fused.get(idx, 0.0) + 1.0 / (k + rank)
     return sorted(fused.items(), key=lambda x: x[1], reverse=True)
 
-
 # Cross-encoder reranking
-
 def rerank(
     query: str,
     chunks: list[Chunk],
@@ -113,8 +86,7 @@ def rerank(
 ) -> list[tuple[int, float]]:
     """Re-score candidate chunks with a cross-encoder.
 
-    Parameters
-    ----------
+    Parameters:
     query : str
         Recommendation / question text.
     chunks : list[Chunk]
@@ -126,8 +98,7 @@ def rerank(
     model_name : str
         HuggingFace cross-encoder model identifier.
 
-    Returns
-    -------
+    Returns:
     list[tuple[int, float]]
         ``(chunk_index, cross_encoder_score)`` — best first.
     """
@@ -137,14 +108,11 @@ def rerank(
     order = np.argsort(scores)[::-1][:top_k]
     return [(candidate_indices[i], float(scores[i])) for i in order]
 
-
 # High-level retriever
-
 class HybridRetriever:
     """BM25 + dense FAISS retrieval with RRF fusion and optional reranking.
 
-    Parameters
-    ----------
+    Parameters:
     faiss_index : faiss.Index
         Pre-built dense-vector index.
     bm25 : BM25Okapi
@@ -205,8 +173,6 @@ class HybridRetriever:
                 "bm25": group_bm25,
             }
 
-    # ── Factory ──────────────────────────────────────────────────────────
-
     @classmethod
     def from_disk(
         cls,
@@ -215,8 +181,7 @@ class HybridRetriever:
     ) -> "HybridRetriever":
         """Load indices from disk and return a ready-to-query retriever.
 
-        Parameters
-        ----------
+        Parameters:
         model_key : str
             Short key identifying the embedding model (and index files).
         use_reranker : bool
@@ -227,8 +192,7 @@ class HybridRetriever:
         embed_model = get_embed_model(model_key)
         return cls(fi, bm, chunks, embed_model, use_reranker)
 
-    # ── Core retrieval method ────────────────────────────────────────────
-
+    # Core retrieval method
     def retrieve(
         self,
         query: str,
@@ -239,17 +203,11 @@ class HybridRetriever:
         near_dup_suppression: bool = DEFAULT_NEAR_DUP_SUPPRESSION,
         inner_retrieval_method: str = "rrf",
     ) -> RetrievalResult:
-        """Retrieve and optionally rerank chunks for *query*.
+        """Retrieve and optionally rerank chunks for query
+        Pipeline stages: BM25 sparse search, Dense FAISS search,
+        RRF fusion (top_k candidates) and cross-encoder rerank (rerank_top results)
 
-        Pipeline stages:
-
-        1. BM25 sparse search → 2×top_k candidates
-        2. Dense FAISS search → 2×top_k candidates
-        3. RRF fusion          → top_k candidates
-        4. Cross-encoder rerank (if enabled) → rerank_top results
-
-        Parameters
-        ----------
+        Parameters:
         query : str
             Free-text recommendation or question.
         top_k : int
@@ -257,8 +215,7 @@ class HybridRetriever:
         rerank_top : int
             Final number of results after reranking.
 
-        Returns
-        -------
+        Returns:
         RetrievalResult
         """
         if retrieval_mode == "split_evidence_retrieval":
@@ -271,20 +228,20 @@ class HybridRetriever:
                 inner_retrieval_method=inner_retrieval_method,
             )
 
-        # 1 & 2 — Sparse + Dense
+        # Sparse + Dense
         _, bm25_idx = search_bm25(self.bm25, query, k=top_k * 2)
         q_emb = embed_texts(
             [query], self.embed_model, show_progress=False, is_query=True,
         )
         _, dense_idx = search_faiss(self.faiss_index, q_emb, k=top_k * 2)
 
-        # 3 — RRF fusion
+        # RRF fusion
         fused = reciprocal_rank_fusion(
             [bm25_idx.tolist(), dense_idx.tolist()]
         )
         hybrid_indices = [idx for idx, _ in fused[:top_k]]
 
-        # 4 — Rerank (optional)
+        # Rerank
         if self.use_reranker:
             reranked = rerank(
                 query, self.chunks, hybrid_indices, top_k=rerank_top,
@@ -413,7 +370,7 @@ class HybridRetriever:
             if len(selected) >= final_k:
                 return selected[:final_k]
 
-        # Fill remaining by score.
+        # Fill remaining by score
         for candidate in candidates:
             idx, _, _ = candidate
             if idx in selected_ids:
@@ -423,7 +380,6 @@ class HybridRetriever:
             add_candidate(candidate)
             if len(selected) >= final_k:
                 break
-
         return selected
 
     def _retrieve_split_evidence(
@@ -467,7 +423,7 @@ class HybridRetriever:
                 retrieval_mode="split_evidence_retrieval",
             )
 
-        # Deduplicate same chunk index across groups and keep best score.
+        # Deduplicate same chunk index across groups and keep best score
         best_by_idx: dict[int, tuple[float, str]] = {}
         for idx, score, group in candidates:
             prev = best_by_idx.get(idx)

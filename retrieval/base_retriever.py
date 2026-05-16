@@ -1,7 +1,6 @@
 """
 Abstract base class for all retriever implementations.
-
-Every retriever exposes the same ``retrieve()`` interface so that
+Every retriever exposes the same retrieve() interface so that
 evaluation code can swap strategies without changes.
 """
 
@@ -20,15 +19,12 @@ class BaseRetriever(ABC):
     def retrieve(self, query: str, top_k: int = 10) -> RetrievalResult:
         """Return the top-*k* chunks for *query*.
 
-        Parameters
-        ----------
+        Parameters:
         query : str
             Free-text recommendation or question.
         top_k : int
             Number of results to return.
 
-        Returns
-        -------
-        RetrievalResult
+        Returns: RetrievalResult
         """
   

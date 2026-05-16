@@ -1,19 +1,16 @@
 """
 Cross-encoder reranking module.
-
-Provides a standalone ``Reranker`` class and a ``RerankedRetriever``
-that wraps any ``BaseRetriever`` to add a second-stage reranking step.
+Provides a standalone reranker class and a RerankedRetriever
+that wraps the BaseRetriever to add a second-stage reranking step
 """
 
 from __future__ import annotations
-
 import numpy as np
 from sentence_transformers import CrossEncoder
 
 from config import RERANKER_MODEL, DEFAULT_RERANK_TOP, DEFAULT_TOP_K
 from data_models import Chunk, RetrievalResult
 from retrieval.base_retriever import BaseRetriever
-
 
 class Reranker:
     """Cross-encoder reranker (stateless scoring utility)."""
@@ -31,8 +28,7 @@ class Reranker:
     ) -> tuple[list[Chunk], list[float]]:
         """Re-score *chunks* with the cross-encoder and return best *top_k*.
 
-        Parameters
-        ----------
+        Parameters:
         query : str
             Original query text.
         chunks : list[Chunk]
@@ -40,9 +36,7 @@ class Reranker:
         top_k : int
             How many to keep after reranking.
 
-        Returns
-        -------
-        (reranked_chunks, scores)
+        Returns: (reranked_chunks, scores)
         """
         if not chunks:
             return [], []
@@ -54,14 +48,11 @@ class Reranker:
             [float(ce_scores[i]) for i in order],
         )
 
-
 class RerankedRetriever(BaseRetriever):
-    """Wraps any ``BaseRetriever`` and applies cross-encoder reranking.
-
-    The base retriever produces an initial candidate set (``initial_k``),
-    then the cross-encoder keeps the best ``final_k`` results.
+    """Wraps BaseRetriever and applies cross-encoder reranking
+    The base retriever produces an initial candidate set,
+    then the cross-encoder keeps the best final_k results
     """
-
     def __init__(
         self,
         base_retriever: BaseRetriever,

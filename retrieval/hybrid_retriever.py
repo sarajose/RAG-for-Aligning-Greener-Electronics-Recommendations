@@ -1,8 +1,7 @@
 """
-Hybrid retriever combining BM25 + FAISS via Reciprocal Rank Fusion.
-
+Hybrid retriever combining BM25 and FAISS via Reciprocal Rank Fusion.
 Implements the RRF algorithm from "Reciprocal Rank Fusion outperforms
-Condorcet and individual Rank Learning Methods" (Cormack et al., 2009).
+Condorcet and individual Rank Learning Methods" (Cormack et al., 2009)
 """
 
 import numpy as np
@@ -21,9 +20,8 @@ from embedding_indexing import (
 from retrieval.base_retriever import BaseRetriever
 from retrieval.retrieval import reciprocal_rank_fusion
 
-
 class HybridRetriever(BaseRetriever):
-    """BM25 + Dense FAISS with Reciprocal Rank Fusion."""
+    """BM25 and Dense FAISS with Reciprocal Rank Fusion"""
 
     def __init__(
         self,

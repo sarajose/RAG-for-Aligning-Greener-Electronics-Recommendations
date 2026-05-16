@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import csv
 from pathlib import Path
 from typing import Any
@@ -7,14 +6,12 @@ from typing import Any
 from config import evidence_group_for_document, EVIDENCE_MAX_CHARS_PER_CHUNK
 from data_models import ClassificationResult, Recommendation
 
-
 def _detect_delimiter(sample: str) -> str:
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;")
         return dialect.delimiter
     except csv.Error:
         return ","
-
 
 def load_recommendations(csv_path: Path) -> list[Recommendation]:
     """Load recommendation rows from comma or semicolon CSV."""
@@ -38,9 +35,7 @@ def load_recommendations(csv_path: Path) -> list[Recommendation]:
                     text=text,
                 )
             )
-
     return recs
-
 
 def save_retrieved_chunks_csv(
     queries: list[str],
@@ -73,18 +68,15 @@ def save_retrieved_chunks_csv(
 
     if not rows:
         return
-
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
 
-
 _JUDGE_FIELDS = [
     "recommendation", "predicted_label", "label_score", "justification_score",
     "evidence_score", "completeness_score", "overall_score", "reasoning",
 ]
-
 
 def append_judge_result_csv(result: Any, output_path: Path) -> None:
     """Append a single JudgeResult row to CSV, writing the header if the file is new."""
@@ -105,7 +97,6 @@ def append_judge_result_csv(result: Any, output_path: Path) -> None:
         if write_header:
             writer.writeheader()
         writer.writerow(row)
-
 
 def save_judge_results_csv(judge_results: list[Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +121,6 @@ def save_judge_results_csv(judge_results: list[Any], output_path: Path) -> None:
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-
 
 def save_prompt_output_csv(
     output_path: Path,

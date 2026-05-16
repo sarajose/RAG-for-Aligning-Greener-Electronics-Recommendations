@@ -1,15 +1,7 @@
 """
 Open-source LLM alignment classifier.
-
-Default model: **Qwen/Qwen2.5-7B-Instruct** — top-ranked open-source
-model for instruction-following and structured JSON output on the MTEB
-leaderboard (as of early 2025).  Supports 4-bit quantisation via
-``bitsandbytes`` to run on GPUs with ≥8 GB VRAM.
-
-Usage::
-
+Usage:
     from rag.classifier import AlignmentClassifier
-
     clf = AlignmentClassifier()                     # default: Qwen2.5-7B
     clf = AlignmentClassifier(quantize_4bit=True)   # 4-bit quantised
     result = clf.classify(recommendation_text, retrieved_chunks)
@@ -20,7 +12,6 @@ import logging
 import re
 from pathlib import Path
 from typing import Optional
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -54,7 +45,6 @@ CLASSIFIER_MODEL_KEYS: dict[str, str] = {
     "qwen": LLM_MODEL,
     "mistral": JUDGE_MODEL,
 }
-
 
 def _parse_json_response(raw: str) -> dict:
     """Parse classifier JSON with one lightweight recovery step."""
@@ -126,7 +116,7 @@ def _parse_json_response(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 3) Regex fallback — recover label (and full justification) from malformed JSON
+    # 3) Regex fallback: recover label (and full justification) from malformed JSON
     label_match = re.search(r'"label"\s*:\s*"([^"]+)"', text)
     if label_match:
         candidate_label = label_match.group(1).strip()
@@ -163,7 +153,6 @@ def _parse_json_response(raw: str) -> dict:
         "cited_chunk_ids": [],
     }
 
-
 def _best_matching_label(candidate: str) -> str:
     """Fuzzy-match a possibly malformed label to the closest valid one."""
     low = candidate.lower().strip()
@@ -172,12 +161,9 @@ def _best_matching_label(candidate: str) -> str:
             return label
     return candidate
 
-
 class AlignmentClassifier:
     """Open-source LLM alignment classifier.
-
-    Parameters
-    ----------
+    Parameters:
     model_name : str
         HuggingFace model identifier.
     quantize_4bit : bool
@@ -308,21 +294,17 @@ class AlignmentClassifier:
     ) -> ClassificationResult:
         """Classify alignment of *recommendation* against *chunks*.
 
-        Parameters
-        ----------
+        Parameters_
         recommendation : str
             Sustainability recommendation text.
         chunks : list[Chunk]
-            Pre-retrieved evidence chunks (typically 5–10).
+            Pre-retrieved evidence chunks (typically 5-10)
         title : str
             Optional group title from the source CSV (e.g. "Strengthen and
             enforce eco-design requirements"). Passed as non-evaluated context
             so stand-alone recommendations that reference their group heading
             are interpretable. Empty string = no context block injected.
-
-        Returns
-        -------
-        ClassificationResult
+        Returns: ClassificationResult
         """
         messages = build_classifier_messages(
             recommendation, chunks,

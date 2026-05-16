@@ -1,14 +1,12 @@
 """CLI pipeline for the thesis workflow.
 
 Commands:
-  build           — embed and index evidence documents
-  prompt          — retrieve + classify recommendations (+ optional LLM judge)
-  evaluate        — unified retrieval evaluation with ablation study
-  download-models — pre-cache embedding/reranker/LLM models
+  build:    embed and index evidence documents
+  prompt:   retrieve and classify recommendations
+  evaluate: unified retrieval evaluation with ablation study
+  download-models: pre-cache embedding/reranker/LLM models
 """
-
 from __future__ import annotations
-
 import argparse
 import logging
 from pathlib import Path
@@ -26,20 +24,18 @@ from config import (
     WHITEPAPER_RECOMMENDATIONS_CSV,
 )
 from pipeline_commands import cmd_build, cmd_download_models, cmd_evaluate, cmd_merge_eval, cmd_prompt
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAG Policy-Alignment Pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # ── build ──────────────────────────────────────────────────────────────
+    # Build
     p_build = sub.add_parser("build", help="Embed and index evidence CSV files")
     p_build.add_argument("-i", "--input", required=True, type=Path, nargs="+", help="Evidence CSV file(s)")
     p_build.add_argument("-m", "--model", default=DEFAULT_MODEL_KEY, choices=list(EMBEDDING_MODELS))
 
-    # ── prompt ─────────────────────────────────────────────────────────────
+    # Prompt
     p_prompt = sub.add_parser("prompt", help="Retrieve, classify, and optionally judge recommendations")
     p_prompt.add_argument(
         "-i", "--input", type=Path, default=WHITEPAPER_RECOMMENDATIONS_CSV,
@@ -58,15 +54,15 @@ def main() -> None:
     )
     p_prompt.add_argument(
         "--inner-retrieval-method", default="rrf", choices=["rrf", "dense", "bm25"],
-        help="Inner retrieval method used within each evidence group (split_evidence_retrieval only)",
+        help="Inner retrieval method used within each evidence group",
     )
     p_prompt.add_argument("--judge", action="store_true", help="Run LLM judge after classification")
 
-    # ── evaluate ───────────────────────────────────────────────────────────
+    # Evaluate
     p_eval = sub.add_parser("evaluate", help="Run unified retrieval evaluation")
     p_eval.add_argument(
         "--models", nargs="+", default=[DEFAULT_MODEL_KEY, "e5-large-v2", "e5-mistral"],
-        help="Embedding model keys to compare (must have pre-built indices)",
+        help="Embedding model keys to compare",
     )
     p_eval.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_unified")
     p_eval.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
@@ -78,19 +74,18 @@ def main() -> None:
     )
     p_eval.add_argument("--evidence-csv", type=Path, default=EVIDENCE_CSV)
 
-    # ── merge-eval ────────────────────────────────────────────────────────
+    # Merge eval
     p_merge = sub.add_parser("merge-eval", help="Merge Kaggle/remote metrics CSV(s) into local unified outputs")
     p_merge.add_argument("--remote-csv", type=Path, nargs="+", required=True)
     p_merge.add_argument("--output-dir", type=Path, default=OUTPUT_DIR / "eval_unified")
     p_merge.add_argument("--ranking-k", type=int, default=10)
 
-    # ── download-models ────────────────────────────────────────────────────
+    # Dowload models
     p_dl = sub.add_parser("download-models", help="Pre-download embedding/reranker/LLM models")
     p_dl.add_argument(
         "--embedding-models", nargs="+", default=["bge-m3", "e5-large-v2", "e5-mistral"],
     )
     p_dl.add_argument("--include-llms", action="store_true")
-
     args = parser.parse_args()
 
     if args.command == "build":
@@ -103,7 +98,6 @@ def main() -> None:
         cmd_merge_eval(args)
     elif args.command == "download-models":
         cmd_download_models(args)
-
 
 if __name__ == "__main__":
     main()

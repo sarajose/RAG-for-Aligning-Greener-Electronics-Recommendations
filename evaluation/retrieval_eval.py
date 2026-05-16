@@ -1,20 +1,11 @@
 """Unified retrieval evaluation orchestrator.
-
-cmd_unified_eval is the main entry point called by `main.py evaluate`.
-It runs:
-1. Gold standard document-level evaluation for all embedding models + methods
-2. MTEB MuPLeR chunk-level evaluation
-3. SPLADE sparse baseline evaluation
-
 All results are written to metrics_all.csv in the output directory.
 """
 
 from __future__ import annotations
-
 import argparse
 from pathlib import Path
 from typing import Any
-
 import numpy as np
 import pandas as pd
 
@@ -52,7 +43,6 @@ MTEB_EMBED_BATCH_SIZE = 32
 MTEB_DEVICE = "auto"
 MTEB_PRECISION = "float32"
 
-
 class _SplitEvidenceRetriever(BaseRetriever):
     """Wraps FullHybridRetriever with retrieval_mode fixed to split_evidence_retrieval."""
 
@@ -66,7 +56,6 @@ class _SplitEvidenceRetriever(BaseRetriever):
     def retrieve(self, query: str, top_k: int = DEFAULT_TOP_K, **_kwargs) -> RetrievalResult:
         """Delegate to FullHybridRetriever with split_evidence_retrieval mode."""
         return self._retriever.retrieve(query, top_k=top_k, retrieval_mode="split_evidence_retrieval")
-
 
 def _build_retrievers_for_model(
     model_key: str,
@@ -96,7 +85,6 @@ def _build_retrievers_for_model(
         retrievers["rrf_rerank"]   = RerankedRetriever(hybrid, reranker, initial_k=initial_k, final_k=rerank_top)
     return retrievers
 
-
 def _faiss_preflight_ok(model_key: str) -> tuple[bool, str]:
     """Sanity-check the FAISS index for a model: dimension, size, and a probe query."""
     try:
@@ -115,7 +103,6 @@ def _faiss_preflight_ok(model_key: str) -> tuple[bool, str]:
         return True, f"ntotal={ntotal}, dim={dim}"
     except Exception as exc:
         return False, str(exc)
-
 
 def _run_splade_eval(
     args: argparse.Namespace,
@@ -186,7 +173,6 @@ def _run_splade_eval(
                 print(f"[warn] Skipping MTEB for model=splade method={mteb_method} due to memory limits: {exc}")
             else:
                 raise
-
 
 def cmd_unified_eval(args: argparse.Namespace) -> None:
     """Run unified evaluation: gold standard, MTEB, and SPLADE; write metrics_all.csv."""

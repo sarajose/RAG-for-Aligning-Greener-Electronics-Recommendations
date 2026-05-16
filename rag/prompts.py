@@ -1,6 +1,5 @@
 """
 Prompt templates for the alignment classifier and LLM-as-judge.
-
 Kept in a single file so that all prompt engineering is co-located
 and easy to iterate on.
 """
@@ -262,8 +261,6 @@ B: justification quality, C: evidence usage, D: completeness / gap analysis).
 Respond with the JSON object only.
 """
 
-
-
 # FORMATTING HELPERS
 def format_evidence_block(chunks: list[Chunk], max_chars_per_chunk: int | None = None) -> str:
     """Format retrieved chunks into a numbered evidence block.
@@ -292,7 +289,6 @@ def format_evidence_block(chunks: list[Chunk], max_chars_per_chunk: int | None =
         parts.append(f"{header}\n{body}\n")
     return "\n".join(parts)
 
-
 def build_classifier_messages(
     recommendation: str,
     chunks: list[Chunk],
@@ -312,7 +308,6 @@ def build_classifier_messages(
         {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
-
 
 _JUDGE_RETRY_SYSTEM = """\
 You are a scoring assistant. Reply with ONLY a JSON object — no other text.
@@ -366,7 +361,6 @@ def build_judge_retry_messages(
             justification=justification[:400],
         )},
     ]
-
 
 def build_judge_messages(
     recommendation: str,

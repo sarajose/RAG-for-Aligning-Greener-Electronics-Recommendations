@@ -1,10 +1,8 @@
 """
 Dense semantic retriever using FAISS vector search.
-
 Uses sentence-transformer embeddings indexed via FAISS HNSW or flat
 inner-product search.  This is the dense-only baseline.
 """
-
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
@@ -13,7 +11,6 @@ from config import DEFAULT_MODEL_KEY, DEFAULT_TOP_K
 from data_models import Chunk, RetrievalResult
 from embedding_indexing import get_embed_model, embed_texts, load_indices
 from retrieval.base_retriever import BaseRetriever
-
 
 class DenseRetriever(BaseRetriever):
     """Dense FAISS retriever (semantic similarity)."""

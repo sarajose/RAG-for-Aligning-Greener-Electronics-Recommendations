@@ -1,17 +1,13 @@
 """
 SPLADE sparse/neural retriever.
-
 Implements a first working SPLADE baseline using token-level sparse
 expansion from a masked language model. The class follows the same
 BaseRetriever interface as BM25/dense/hybrid so evaluation code can
 reuse it directly.
 """
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Iterable
-
 import numpy as np
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer
@@ -21,12 +17,10 @@ from data_models import Chunk, RetrievalResult
 from embedding_indexing import load_indices
 from retrieval.base_retriever import BaseRetriever
 
-
 @dataclass
 class _SparseVector:
     token_ids: np.ndarray
     weights: np.ndarray
-
 
 def _dot_sparse(a: _SparseVector, b: _SparseVector) -> float:
     """Compute sparse dot product for sorted token-id vectors."""
@@ -47,7 +41,6 @@ def _dot_sparse(a: _SparseVector, b: _SparseVector) -> float:
         else:
             j += 1
     return score
-
 
 class SPLADERetriever(BaseRetriever):
     """Sparse neural retriever based on SPLADE term expansions."""

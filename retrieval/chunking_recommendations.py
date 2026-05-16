@@ -13,13 +13,13 @@ Usage:
 
 import re, csv, argparse, spacy
 
-# ── Load spaCy (small model, just for POS tagging) ──
+# Load spaCy (small model, just for POS tagging)
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
     raise SystemExit("Run: python -m spacy download en_core_web_sm")
 
-# ── Patterns ──
+# Patterns
 SECTION_RE = re.compile(r'^(\d+\.\d+)\.\s*(.+)')
 SUBSECTION_RE = re.compile(r'^[·\t\s]*(?:Best practices|Actions needed)', re.I)
 TOP_BULLET_RE = re.compile(r'^[·•\-\*§]\t?\s*')
@@ -81,7 +81,7 @@ def parse(text: str) -> list[dict]:
     section = subsection = ""
     # Two-pass: first collect raw bullet hierarchy, then flatten
 
-    # ── Pass 1: collect bullets ──
+    # Pass 1: collect bullets
     entries: list[dict] = []  # {"section","subsection","text","subs":[str]}
     current: dict | None = None
     cont_lines: list[str] = []
@@ -118,7 +118,7 @@ def parse(text: str) -> list[dict]:
         if not section:
             continue
 
-        # Sub-bullet → attach to current parent
+        # Sub-bullet: attach to current parent
         if SUB_BULLET_RE.match(line):
             if current is not None:
                 if cont_lines:
@@ -141,7 +141,7 @@ def parse(text: str) -> list[dict]:
 
     flush()
 
-    # ── Pass 2: flatten into rows ──
+    # Pass 2: flatten into rows
     rows = []
     for e in entries:
         txt = e["text"].strip()
@@ -177,9 +177,7 @@ def parse(text: str) -> list[dict]:
                     "title": title,
                     "recommendation": chunk,
                 })
-
     return rows
-
 
 def main(input_path: str, output_path: str):
     with open(input_path, encoding="utf-8") as f:
@@ -193,7 +191,6 @@ def main(input_path: str, output_path: str):
         w.writerows(rows)
 
     print(f"Wrote {len(rows)} recommendations to {output_path}")
-
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()

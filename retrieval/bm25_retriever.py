@@ -1,7 +1,6 @@
 """
 BM25 sparse-lexical retriever (baseline).
-
-Uses BM25Okapi for term-frequency–based document ranking.
+Uses BM25Okapi for term-frequency-based document ranking.
 This serves as the lexical baseline against which dense and
 hybrid approaches are compared.
 """

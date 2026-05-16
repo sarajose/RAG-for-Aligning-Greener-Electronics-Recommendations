@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import gc
 from pathlib import Path
@@ -20,7 +19,6 @@ from pipeline_io import (
 )
 from retrieval.retrieval import HybridRetriever
 
-
 __all__ = [
     "cmd_build",
     "cmd_prompt",
@@ -29,12 +27,10 @@ __all__ = [
     "cmd_merge_eval",
 ]
 
-
 def _require_file(path: Path, label: str) -> None:
     """Raise a clear error if a required input file is missing."""
     if not path.exists():
         raise FileNotFoundError(f"Missing {label}: {path}")
-
 
 def _index_paths(model_key: str) -> tuple[Path, Path, Path]:
     """Return the three index artifact paths for a model key."""
@@ -44,7 +40,6 @@ def _index_paths(model_key: str) -> tuple[Path, Path, Path]:
         Path(str(prefix) + "_bm25.pkl"),
         Path(str(prefix) + "_chunks.pkl"),
     )
-
 
 def _require_indices(model_key: str) -> None:
     """Validate that all retrieval index artifacts exist for prompt mode."""
@@ -61,12 +56,10 @@ def _require_indices(model_key: str) -> None:
         f"{missing_str}"
     )
 
-
 def _print_progress(stage: str, idx: int, total: int) -> None:
     """Print progress every 10 items and at completion."""
     if idx % 10 == 0 or idx == total:
         print(f"  [{stage}] {idx}/{total}")
-
 
 def _retrieve_all(
     retriever: Any,
@@ -94,7 +87,6 @@ def _retrieve_all(
         _print_progress("retrieve", idx, total)
     return results
 
-
 def _free_gpu(note: str = "") -> None:
     """Release Python objects and flush the CUDA allocator cache."""
     import torch
@@ -106,7 +98,6 @@ def _free_gpu(note: str = "") -> None:
         reserved = torch.cuda.memory_reserved() / 1024 ** 3
         tag = f" [{note}]" if note else ""
         print(f"[gpu]{tag} allocated={alloc:.2f} GiB | reserved={reserved:.2f} GiB")
-
 
 def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[ClassificationResult]:
     """Classify all retrieved recommendation contexts."""
@@ -122,7 +113,6 @@ def _classify_all(recs: list[Any], retrieval_results: list[Any]) -> list[Classif
     _free_gpu("after classifier")
     return cls_results
 
-
 def cmd_build(args: argparse.Namespace) -> None:
     """Build index artifacts for one or more evidence CSV inputs."""
     for input_path in args.input:
@@ -133,7 +123,6 @@ def cmd_build(args: argparse.Namespace) -> None:
         build_index(args.input[0], args.model)
     else:
         build_merged_index(*args.input, model_key=args.model)
-
 
 def cmd_prompt(args: argparse.Namespace) -> None:
     """Retrieve, classify, and optionally run LLM judge."""
@@ -159,9 +148,7 @@ def cmd_prompt(args: argparse.Namespace) -> None:
     # Free the retriever (embedding model + reranker) before loading the LLM.
     del retriever
     _free_gpu("after retriever")
-
     cls_results = _classify_all(recs, retrieval_results)
-
     save_prompt_output_csv(args.output, recs, retrieval_results, cls_results)
     print(f"[prompt] Saved -> {args.output}")
 
@@ -190,7 +177,6 @@ def cmd_prompt(args: argparse.Namespace) -> None:
                 print(f"[prompt] Judge -> {judge_path} ({len(judge_results)} rows)")
         except Exception as exc:
             print(f"[prompt] Judge stage ERROR: {exc}")
-
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
     """Run unified retrieval evaluation."""

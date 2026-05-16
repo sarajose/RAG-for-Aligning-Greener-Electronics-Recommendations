@@ -1,14 +1,10 @@
 """Compatibility facade for indexing utilities.
-
 Public functions are re-exported from smaller modules under indexing/.
-This keeps legacy imports working while reducing file size and complexity.
 """
 
 from __future__ import annotations
-
 import argparse
 from pathlib import Path
-
 from config import DEFAULT_MODEL_KEY, EMBEDDING_MODELS
 from indexing import (
     build_bm25_index,
@@ -42,7 +38,6 @@ __all__ = [
     "build_merged_index",
 ]
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build embedding + BM25 indices from evidence CSV files"
@@ -55,7 +50,6 @@ def main() -> None:
         build_index(args.input[0], args.model)
     else:
         build_merged_index(*args.input, model_key=args.model)
-
 
 if __name__ == "__main__":
     main()

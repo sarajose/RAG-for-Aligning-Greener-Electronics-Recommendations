@@ -1,28 +1,15 @@
 """
 LLM-as-judge evaluation of alignment classifications.
 
-Uses a **different** open-source LLM from the classifier to avoid
-self-evaluation bias (Zheng et al., "Judging LLM-as-a-Judge with
-MT-Bench and Chatbot Arena", NeurIPS 2023).
-
-Default judge model: **mistralai/Mistral-7B-Instruct-v0.3** —
-a different model family from the Qwen-based classifier.
-
 Each classification receives three sub-scores (1-5) and an overall
-score:
-
-- **Label correctness** — is the alignment label appropriate?
-- **Justification quality** — is the reasoning grounded in evidence?
-- **Evidence usage** — are the cited provisions relevant and sufficient?
+score
 """
-
 import json
 import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -43,11 +30,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_JUDGE_MODEL = JUDGE_MODEL
 
-# Reasoning models (e.g. SmolLM3) emit a <think>…</think> block before JSON.
+# Reasoning models (e.g. SmolLM3) emit a <think>…</think> block before JSON. (not needed anynmore, changed model)
 # The per-criterion reasoning is now longer; 1536 ensures the model can finish
 # both any thinking block and the full reasoning JSON.
 _JUDGE_MIN_NEW_TOKENS = 1536
-
 
 @dataclass
 class JudgeResult:
@@ -74,7 +60,7 @@ def _parse_judge_response(raw: str) -> dict:
     4. Hard fallback (all scores = 1) when all above fail.
     """
     text = raw.strip()
-    # Reasoning models (e.g. SmolLM3) wrap chain-of-thought in <think>…</think>
+    # Reasoning models (e.g. SmolLM3) wrap chain-of-thought in <think>…</think> (not needed)
     # before the actual JSON.  Two cases:
     # 1. Complete block: <think>…</think>JSON  →  strip the block, keep JSON.
     # 2. Truncated mid-think (no </think>): <think>…  →  nothing useful remains.
@@ -347,17 +333,13 @@ class LLMJudge:
         output_path: "Path | None" = None,
     ) -> list[JudgeResult]:
         """Evaluate a batch of classifications.
-
-        Parameters
-        ----------
+        Parameters:
         classifications : list[ClassificationResult]
         output_path : Path, optional
             If given, each result is appended to CSV immediately after evaluation
             so partial results survive crashes or job timeouts.
 
-        Returns
-        -------
-        list[JudgeResult]
+        Returns: list[JudgeResult]
         """
         from pathlib import Path as _Path
         from pipeline_io import append_judge_result_csv
