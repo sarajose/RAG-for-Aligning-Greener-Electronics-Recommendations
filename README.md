@@ -1,4 +1,4 @@
-# RAG-for-Aligning-Greener-Electronics-Recommendations
+# RAG for Aligning Greener Electronics Recommendations
 
 ## Project
 
@@ -10,6 +10,23 @@ Pipeline stages:
 3. Build retrieval indices (embedding and BM25).
 4. Retrieve evidence and classify alignment.
 5. Run unified evaluation
+
+---
+
+## Models
+
+**Embedding models**:
+- `bge-m3` → `BAAI/bge-m3`
+- `e5-large-v2` → `intfloat/e5-large-v2`
+- `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
+
+**LLM classifiers and judge**:
+- `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (classifier)
+- `qwen` → `Qwen/Qwen2.5-7B-Instruct` (judge)
+
+**Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
+
+**Sparse baseline**: SPLADE (always included in evaluation)
 
 ---
 
@@ -38,7 +55,6 @@ Build FAISS + BM25 indices for each embedding model you want to compare:
 ```powershell
 python main.py build -i outputs/evidence.csv -m bge-m3
 python main.py build -i outputs/evidence.csv -m e5-large-v2
-python main.py build -i outputs/evidence.csv -m e5-mistral
 ```
 
 ### 4. Retrieve and classify
@@ -89,14 +105,14 @@ python evaluation/full_study.py prompt-study `
 ### `build`
 | Argument | Default | Description |
 |---|---|---|
-| `-i / --input` | required | Evidence CSV file(s) |
+| `-i / --input` | required | Evidence csv file(s) |
 | `-m / --model` | `bge-m3` | Embedding model key |
 
 ### `prompt`
 | Argument | Default | Description |
 |---|---|---|
-| `-i / --input` | whitepaper CSV | Recommendations CSV |
-| `-o / --output` | `outputs/prompt_results.csv` | Output CSV |
+| `-i / --input` | whitepaper csv | Recommendations csv |
+| `-o / --output` | `outputs/prompt_results.csv` | Output csv |
 | `-m / --model` | `bge-m3` | Embedding model key |
 | `-k / --top-k` | `10` | Candidates before reranking |
 | `--rerank-top` | `5` | Results after reranking |
@@ -114,8 +130,6 @@ python evaluation/full_study.py prompt-study `
 | `--k-values` | `1 3 5 10 20` | Evaluation cutoffs |
 | `--retrieval-mode` | `flat_baseline` | `flat_baseline` or `split_evidence_retrieval` |
 | `--evidence-csv` | `outputs/evidence.csv` | Evidence CSV for auto-building missing indices |
-
-Always on (not configurable): SPLADE baseline, full MTEB corpus (MuPLeR, no cap), cross-encoder reranking, auto-build missing indices.
 
 ### `merge-eval`
 | Argument | Default | Description |
@@ -138,32 +152,15 @@ Always on (not configurable): SPLADE baseline, full MTEB corpus (MuPLeR, no cap)
 
 | Path | Description |
 |---|---|
-| `outputs/indices/` | FAISS + BM25 index artifacts per model |
+| `outputs/indices/` | FAISS + BM25 index artifacts per model (Generated in step 3)|
 | `outputs/prompt_results.csv` | Classification results |
 | `outputs/prompt_results_retrieved_chunks.csv` | Retrieved evidence per recommendation |
 | `outputs/eval_unified/metrics_all.csv` | All metrics across models/methods/k (used by retrieval notebook) |
 | `outputs/eval_unified/mteb_retrieved_chunks_<model>_<method>.csv` | Retrieved MTEB chunks per configuration |
-| `outputs/eval_prompt/classification_label_distribution.csv` | Label distribution (used by classifier notebook) |
+| `outputs/eval_prompt/classification_label_distribution.csv` | Label distribution (not in use) |
 | `outputs/eval_prompt/classification_retrieval_mode_distribution.csv` | Retrieval mode distribution |
 | `outputs/eval_prompt/classification_cited_chunk_frequency.csv` | Most-cited chunk IDs |
-| `outputs/eval_prompt/judge_overall_band_distribution.csv` | Judge score band distribution (used by judge notebook) |
-
----
-
-## Models
-
-**Embedding models**:
-- `bge-m3` → `BAAI/bge-m3`
-- `e5-large-v2` → `intfloat/e5-large-v2`
-- `e5-mistral` → `intfloat/e5-mistral-7b-instruct`
-
-**LLM classifiers and judge**:
-- `mistral` → `mistralai/Mistral-7B-Instruct-v0.3` (classifier)
-- `qwen` → `Qwen/Qwen2.5-7B-Instruct` (judge)
-
-**Reranker**: `BAAI/bge-reranker-v2-m3` (multilingual, 570M parameters)
-
-**Sparse baseline**: SPLADE (always included in evaluation)
+| `outputs/eval_prompt/judge_overall_band_distribution.csv` | Judge score band distribution (not in use) |
 
 ---
 
@@ -174,8 +171,8 @@ pipeline.py                      argparse CLI definitions
 pipeline_commands.py             command implementations
 pipeline_io.py                   I/O helpers (load/save CSV)
 config.py                        all paths, model IDs, hyperparameters
-data_models.py                   shared dataclasses (Chunk, Recommendation, ...)
-embedding_indexing.py            embed_texts, build_faiss_index, load_indices (facade)
+data_models.py                   shared dataclasses (chunk, recommendation, ...)
+embedding_indexing.py            embed_texts, build_faiss_index, load_indices
 
 retrieval/
   retrieval.py                   HybridRetriever (BM25 + FAISS + RRF + reranker)
@@ -206,7 +203,5 @@ rag/
   llm_judge.py                   LLM judge
   prompts.py                     prompt templates
 
-notebooks/                       analysis and visualisation
-outputs/                         generated artifacts (indices, results, eval)
 data/                            evidence HTML, gold standard, recommendations
 ```
